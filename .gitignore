@@ -5,6 +5,7 @@
 *.h
 bin/
 build/
+dist/
 
 # IDE & OS
 .DS_Store
