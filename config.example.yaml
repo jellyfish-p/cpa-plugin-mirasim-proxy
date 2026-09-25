@@ -1,0 +1,21 @@
+# CLIProxyAPI Plugin Configuration for Mirasim
+# Place this under your CLIProxyAPI config.yaml
+
+plugins:
+  enabled: true
+  dir: "plugins" # Directory containing mirasim.dll or mirasim.so
+  configs:
+    mirasim:
+      enabled: true
+      priority: 1
+      # Local Mirasim backend port (default: 4939)
+      port: 4939
+      # Default agent when model is "mirasim" or "default" (default: "pi")
+      # Available agents: pi, claude, codex, kimi, qwen, grok, zcode
+      default_agent: "pi"
+      # Optional: custom path to server.cjs (if not located in standard search paths)
+      # server_script: "C:/path/to/server.cjs"
+      # Optional: direct WebSocket URL (overrides auto-discovery and auto-spawn)
+      # ws_url: "ws://127.0.0.1:4939/ws?token=YOUR_TOKEN"
+      # Auto-launch Mirasim backend if not currently running (default: true)
+      auto_spawn: true
