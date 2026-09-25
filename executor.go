@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/cliproxy-plugin-mirasim/mirasim"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/cliproxy-plugin-mirasim/mirasim"
 )
 
 var (
@@ -20,25 +20,37 @@ var (
 	processMgr      *mirasim.ProcessManager
 )
 
-// EnsureMirasimClient returns an active Mirasim client based on configuration.
+// EnsureMirasimClient returns an active Mirasim client based on configuration and auth.
 func EnsureMirasimClient(cfg pluginConfig) (*mirasim.Client, error) {
 	mirasimClientMu.Lock()
 	defer mirasimClientMu.Unlock()
+
+	// 1. Check if auth has been established via OAuth or auth.parse
+	_, wsURL := GetActiveAuth()
+	if wsURL != "" {
+		if mirasimClient == nil {
+			mirasimClient = mirasim.NewClient(wsURL)
+		} else {
+			mirasimClient.UpdateURL(wsURL)
+		}
+		return mirasimClient, nil
+	}
 
 	if mirasimClient != nil && mirasimClient.GetURL() != "" {
 		return mirasimClient, nil
 	}
 
-	wsURL := cfg.WsURL
+	wsURL = cfg.WsURL
 
 	if wsURL == "" {
-		// 1. Scan for running instances
+		// 2. Scan for running instances
 		instances, err := mirasim.FindActiveInstances()
 		if err == nil && len(instances) > 0 {
 			wsURL = instances[0].WsURL
+			SetActiveAuth(instances[0].Token, wsURL)
 			log.Printf("[Plugin:Mirasim] Attached to running instance on port %d", instances[0].Port)
 		} else if cfg.AutoSpawn {
-			// 2. Auto-spawn backend
+			// 3. Auto-spawn backend
 			scriptPath, err := mirasim.LocateServerScript(cfg.ServerScript)
 			if err != nil {
 				return nil, fmt.Errorf("locate server.cjs: %w", err)
@@ -51,6 +63,7 @@ func EnsureMirasimClient(cfg pluginConfig) (*mirasim.Client, error) {
 			}
 			processMgr = pm
 			wsURL = pm.WsURL()
+			SetActiveAuth(pm.Token(), wsURL)
 		} else {
 			return nil, fmt.Errorf("no active Mirasim server found and auto_spawn is disabled")
 		}
@@ -209,12 +222,16 @@ func ConvertMessagesToPrompt(messages []ChatMessage) string {
 	return sb.String()
 }
 
-// MapModelToAgent maps request model name to Mirasim agent & sub-model.
-func MapModelToAgent(modelName string, defaultAgent string) (agent string, actualModel string) {
-	m := strings.ToLower(strings.TrimSpace(modelName))
-	if defaultAgent == "" {
-		defaultAgent = "pi"
+// MapModelToAgent resolves the Mirasim agent & sub-model from the requested model name.
+// Supports mirasim/{model} format (e.g. mirasim/pi, mirasim/claude-3-7-sonnet, mirasim/codex).
+func MapModelToAgent(modelName string) (agent string, actualModel string) {
+	m := strings.TrimSpace(modelName)
+	// Strip "mirasim/" prefix if present
+	if strings.HasPrefix(strings.ToLower(m), "mirasim/") {
+		m = m[len("mirasim/"):]
 	}
+
+	mLower := strings.ToLower(m)
 
 	if parts := strings.SplitN(m, ":", 2); len(parts) == 2 {
 		return parts[0], parts[1]
@@ -224,24 +241,28 @@ func MapModelToAgent(modelName string, defaultAgent string) (agent string, actua
 	}
 
 	switch {
-	case m == "" || m == "default" || m == "mirasim":
-		return defaultAgent, ""
-	case strings.HasPrefix(m, "claude"):
-		return "claude", modelName
-	case strings.HasPrefix(m, "codex") || strings.HasPrefix(m, "gpt") || strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3"):
-		return "codex", modelName
-	case strings.HasPrefix(m, "kimi"):
-		return "kimi", modelName
-	case strings.HasPrefix(m, "qwen"):
-		return "qwen", modelName
-	case strings.HasPrefix(m, "grok"):
-		return "grok", modelName
-	case strings.HasPrefix(m, "zcode") || strings.HasPrefix(m, "glm"):
-		return "zcode", modelName
-	case strings.HasPrefix(m, "pi"):
-		return "pi", modelName
+	case mLower == "" || mLower == "default":
+		return "", ""
+	case mLower == "pi":
+		return "pi", ""
+	case mLower == "claude":
+		return "claude", ""
+	case strings.HasPrefix(mLower, "claude-"):
+		return "claude", m
+	case mLower == "codex":
+		return "codex", ""
+	case strings.HasPrefix(mLower, "gpt-") || strings.HasPrefix(mLower, "o1") || strings.HasPrefix(mLower, "o3"):
+		return "codex", m
+	case strings.HasPrefix(mLower, "kimi"):
+		return "kimi", m
+	case strings.HasPrefix(mLower, "qwen"):
+		return "qwen", m
+	case strings.HasPrefix(mLower, "grok"):
+		return "grok", m
+	case strings.HasPrefix(mLower, "zcode") || strings.HasPrefix(mLower, "glm"):
+		return "zcode", m
 	default:
-		return defaultAgent, modelName
+		return m, ""
 	}
 }
 
@@ -267,7 +288,7 @@ func executeNonStream(ctx context.Context, cfg pluginConfig, req pluginapi.Execu
 		modelName = req.Model
 	}
 
-	agent, model := MapModelToAgent(modelName, cfg.DefaultAgent)
+	agent, model := MapModelToAgent(modelName)
 
 	client, err := EnsureMirasimClient(cfg)
 	if err != nil {
@@ -381,7 +402,7 @@ func executeStreamRequest(cfg pluginConfig, req rpcExecutorRequest) (streamRespo
 		modelName = req.Model
 	}
 
-	agent, model := MapModelToAgent(modelName, cfg.DefaultAgent)
+	agent, model := MapModelToAgent(modelName)
 
 	client, err := EnsureMirasimClient(cfg)
 	if err != nil {

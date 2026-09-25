@@ -1,8 +1,6 @@
 package main
 
 import (
-	"strings"
-
 	"gopkg.in/yaml.v3"
 )
 
@@ -11,18 +9,16 @@ type pluginConfig struct {
 	Priority     int    `yaml:"priority"`
 	MirasimPort  int    `yaml:"port"`
 	ServerScript string `yaml:"server_script"`
-	DefaultAgent string `yaml:"default_agent"`
 	WsURL        string `yaml:"ws_url"`
 	AutoSpawn    bool   `yaml:"auto_spawn"`
 }
 
 func defaultPluginConfig() pluginConfig {
 	return pluginConfig{
-		Enabled:      true,
-		Priority:     1,
-		MirasimPort:  4939,
-		DefaultAgent: "pi",
-		AutoSpawn:    true,
+		Enabled:     true,
+		Priority:    1,
+		MirasimPort: 4939,
+		AutoSpawn:   true,
 	}
 }
 
@@ -32,10 +28,6 @@ func decodeConfig(raw []byte) (pluginConfig, error) {
 		if err := yaml.Unmarshal(raw, &cfg); err != nil {
 			return cfg, err
 		}
-	}
-	cfg.DefaultAgent = strings.TrimSpace(cfg.DefaultAgent)
-	if cfg.DefaultAgent == "" {
-		cfg.DefaultAgent = "pi"
 	}
 	if cfg.MirasimPort <= 0 {
 		cfg.MirasimPort = 4939

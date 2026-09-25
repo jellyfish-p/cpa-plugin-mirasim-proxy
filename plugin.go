@@ -43,6 +43,21 @@ type rpcExecutorRequest struct {
 	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
+type rpcAuthLoginStartRequest struct {
+	pluginapi.AuthLoginStartRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type rpcAuthLoginPollRequest struct {
+	pluginapi.AuthLoginPollRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type rpcAuthRefreshRequest struct {
+	pluginapi.AuthRefreshRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
 type streamResponse struct {
 	Headers http.Header                     `json:"headers,omitempty"`
 	Chunks  []pluginapi.ExecutorStreamChunk `json:"chunks,omitempty"`
@@ -57,6 +72,7 @@ type registration struct {
 type registrationCapability struct {
 	ModelProvider         bool                         `json:"model_provider"`
 	Executor              bool                         `json:"executor"`
+	AuthProvider          bool                         `json:"auth_provider"`
 	ExecutorModelScope    pluginapi.ExecutorModelScope `json:"executor_model_scope"`
 	ExecutorInputFormats  []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats []string                     `json:"executor_output_formats,omitempty"`
@@ -100,11 +116,6 @@ func pluginRegistration() registration {
 					Description: "Explicit WebSocket URL for Mirasim server (ws://...)",
 				},
 				{
-					Name:        "default_agent",
-					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Default agent to use (pi, claude, codex, kimi, qwen, grok)",
-				},
-				{
 					Name:        "server_script",
 					Type:        pluginapi.ConfigFieldTypeString,
 					Description: "Path to server.cjs script",
@@ -119,6 +130,7 @@ func pluginRegistration() registration {
 		Capabilities: registrationCapability{
 			ModelProvider:         true,
 			Executor:              true,
+			AuthProvider:          true,
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeBoth,
 			ExecutorInputFormats:  []string{"chat-completions", "openai.chat"},
 			ExecutorOutputFormats: []string{"chat-completions", "openai.chat"},
@@ -185,6 +197,53 @@ func handlePluginMethod(method string, request []byte) ([]byte, error) {
 		resp, err := executeStreamRequest(loadedConfig(), req)
 		if err != nil {
 			return errorEnvelope("stream_error", err.Error()), nil
+		}
+		return okEnvelope(resp)
+
+	case pluginabi.MethodAuthIdentifier:
+		return okEnvelope(handleAuthIdentifier())
+
+	case pluginabi.MethodAuthParse:
+		var req pluginapi.AuthParseRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return errorEnvelope("invalid_request", err.Error()), nil
+		}
+		resp, err := handleAuthParse(req)
+		if err != nil {
+			return errorEnvelope("auth_parse_error", err.Error()), nil
+		}
+		return okEnvelope(resp)
+
+	case pluginabi.MethodAuthLoginStart:
+		var req rpcAuthLoginStartRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return errorEnvelope("invalid_request", err.Error()), nil
+		}
+		resp, err := handleAuthLoginStart(req.AuthLoginStartRequest)
+		if err != nil {
+			return errorEnvelope("auth_login_start_error", err.Error()), nil
+		}
+		return okEnvelope(resp)
+
+	case pluginabi.MethodAuthLoginPoll:
+		var req rpcAuthLoginPollRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return errorEnvelope("invalid_request", err.Error()), nil
+		}
+		resp, err := handleAuthLoginPoll(context.Background(), req.AuthLoginPollRequest)
+		if err != nil {
+			return errorEnvelope("auth_login_poll_error", err.Error()), nil
+		}
+		return okEnvelope(resp)
+
+	case pluginabi.MethodAuthRefresh:
+		var req rpcAuthRefreshRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return errorEnvelope("invalid_request", err.Error()), nil
+		}
+		resp, err := handleAuthRefresh(req.AuthRefreshRequest)
+		if err != nil {
+			return errorEnvelope("auth_refresh_error", err.Error()), nil
 		}
 		return okEnvelope(resp)
 
