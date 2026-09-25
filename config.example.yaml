@@ -8,11 +8,7 @@ plugins:
     mirasim:
       enabled: true
       priority: 1
-      # Local Mirasim backend port (default: 4939)
-      port: 4939
-      # Optional: custom path to server.cjs (if not located in standard search paths)
-      # server_script: "C:/path/to/server.cjs"
-      # Optional: direct WebSocket URL (overrides auto-discovery and auto-spawn)
-      # ws_url: "ws://127.0.0.1:4939/ws?token=YOUR_TOKEN"
-      # Auto-launch Mirasim backend if not currently running (default: true)
-      auto_spawn: true
+      # Mirasim Relay / API Gateway URL (default: https://relay.mirasim.ai)
+      relay_url: "https://relay.mirasim.ai"
+      # Optional: manual token override (can also be configured via OAuth in the WebUI panel)
+      # token: "YOUR_MIRASIM_TOKEN"

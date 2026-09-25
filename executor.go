@@ -1,76 +1,21 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
-	"github.com/router-for-me/cliproxy-plugin-mirasim/mirasim"
 )
 
-var (
-	mirasimClientMu sync.Mutex
-	mirasimClient   *mirasim.Client
-	processMgr      *mirasim.ProcessManager
-)
-
-// EnsureMirasimClient returns an active Mirasim client based on configuration and auth.
-func EnsureMirasimClient(cfg pluginConfig) (*mirasim.Client, error) {
-	mirasimClientMu.Lock()
-	defer mirasimClientMu.Unlock()
-
-	// 1. Check if auth has been established via OAuth or auth.parse
-	_, wsURL := GetActiveAuth()
-	if wsURL != "" {
-		if mirasimClient == nil {
-			mirasimClient = mirasim.NewClient(wsURL)
-		} else {
-			mirasimClient.UpdateURL(wsURL)
-		}
-		return mirasimClient, nil
-	}
-
-	if mirasimClient != nil && mirasimClient.GetURL() != "" {
-		return mirasimClient, nil
-	}
-
-	wsURL = cfg.WsURL
-
-	if wsURL == "" {
-		// 2. Scan for running instances
-		instances, err := mirasim.FindActiveInstances()
-		if err == nil && len(instances) > 0 {
-			wsURL = instances[0].WsURL
-			SetActiveAuth(instances[0].Token, wsURL)
-			log.Printf("[Plugin:Mirasim] Attached to running instance on port %d", instances[0].Port)
-		} else if cfg.AutoSpawn {
-			// 3. Auto-spawn backend
-			scriptPath, err := mirasim.LocateServerScript(cfg.ServerScript)
-			if err != nil {
-				return nil, fmt.Errorf("locate server.cjs: %w", err)
-			}
-			log.Printf("[Plugin:Mirasim] Spawning server.cjs on port %d...", cfg.MirasimPort)
-
-			pm, err := mirasim.StartMirasimServer(scriptPath, cfg.MirasimPort, "")
-			if err != nil {
-				return nil, fmt.Errorf("start mirasim server: %w", err)
-			}
-			processMgr = pm
-			wsURL = pm.WsURL()
-			SetActiveAuth(pm.Token(), wsURL)
-		} else {
-			return nil, fmt.Errorf("no active Mirasim server found and auto_spawn is disabled")
-		}
-	}
-
-	mirasimClient = mirasim.NewClient(wsURL)
-	return mirasimClient, nil
+var httpClient = &http.Client{
+	Timeout: 5 * time.Minute,
 }
 
 // ChatMessage represents a single message in OpenAI format.
@@ -82,12 +27,13 @@ type ChatMessage struct {
 
 // ChatCompletionRequest is the OpenAI request payload.
 type ChatCompletionRequest struct {
-	Model      string        `json:"model"`
-	Messages   []ChatMessage `json:"messages"`
-	Stream     bool          `json:"stream,omitempty"`
-	SessionKey string        `json:"session_key,omitempty"`
-	Effort     string        `json:"effort,omitempty"`
-	Workdir    string        `json:"workdir,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []ChatMessage   `json:"messages"`
+	Stream      bool            `json:"stream,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Tools       json.RawMessage `json:"tools,omitempty"`
 }
 
 // ChatCompletionResponse is the OpenAI response payload.
@@ -159,201 +105,107 @@ func ExtractTextContent(content interface{}) string {
 	}
 }
 
-// ConvertMessagesToPrompt converts OpenAI messages to Mirasim prompt.
-func ConvertMessagesToPrompt(messages []ChatMessage) string {
-	if len(messages) == 0 {
-		return ""
+// resolveActiveToken retrieves the active token from memory, config, or discovery.
+func resolveActiveToken(cfg pluginConfig) string {
+	token, _ := GetActiveAuth()
+	if token != "" {
+		return token
 	}
-	if len(messages) == 1 && (messages[0].Role == "user" || messages[0].Role == "") {
-		return ExtractTextContent(messages[0].Content)
+	if cfg.Token != "" {
+		return cfg.Token
 	}
-
-	var systemPrompt string
-	var conversation []ChatMessage
-
-	for _, msg := range messages {
-		if msg.Role == "system" || msg.Role == "developer" {
-			txt := ExtractTextContent(msg.Content)
-			if systemPrompt == "" {
-				systemPrompt = txt
-			} else {
-				systemPrompt += "\n" + txt
-			}
-		} else {
-			conversation = append(conversation, msg)
-		}
+	// Try discovery
+	if tok := discoverLocalToken(); tok != "" {
+		return tok
 	}
-
-	if systemPrompt == "" && len(conversation) == 1 && conversation[0].Role == "user" {
-		return ExtractTextContent(conversation[0].Content)
-	}
-
-	var sb strings.Builder
-	if systemPrompt != "" {
-		sb.WriteString("[System Instructions]\n")
-		sb.WriteString(systemPrompt)
-		sb.WriteString("\n\n")
-	}
-
-	if len(conversation) > 0 {
-		lastIdx := len(conversation) - 1
-		lastMsg := conversation[lastIdx]
-
-		if lastIdx > 0 {
-			sb.WriteString("[Conversation History]\n")
-			for i := 0; i < lastIdx; i++ {
-				m := conversation[i]
-				role := strings.Title(m.Role)
-				if role == "" {
-					role = "User"
-				}
-				sb.WriteString(fmt.Sprintf("%s: %s\n", role, ExtractTextContent(m.Content)))
-			}
-			sb.WriteString("\n")
-		}
-
-		if lastMsg.Role == "user" {
-			sb.WriteString(ExtractTextContent(lastMsg.Content))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s: %s", strings.Title(lastMsg.Role), ExtractTextContent(lastMsg.Content)))
-		}
-	}
-
-	return sb.String()
+	return ""
 }
 
-// MapModelToAgent resolves the internal Mirasim harness & model from a pure model ID.
-// Model name format is strictly mirasim/{model_id} (e.g. mirasim/claude-3-7-sonnet, mirasim/gpt-4o).
-// Callers do not specify harness names; routing is completely transparent.
-func MapModelToAgent(modelName string) (agent string, actualModel string) {
-	m := strings.TrimSpace(modelName)
-	// Strip "mirasim/" prefix if present
-	if strings.HasPrefix(strings.ToLower(m), "mirasim/") {
-		m = m[len("mirasim/"):]
+// resolveRelayBaseURL returns the configured or default relay gateway URL.
+func resolveRelayBaseURL(cfg pluginConfig) string {
+	url := strings.TrimSpace(cfg.RelayURL)
+	if url == "" {
+		url = "https://relay.mirasim.ai"
 	}
-
-	mLower := strings.ToLower(m)
-
-	switch {
-	case strings.HasPrefix(mLower, "claude-"):
-		return "claude", m
-	case strings.HasPrefix(mLower, "gpt-") || strings.HasPrefix(mLower, "o1") || strings.HasPrefix(mLower, "o3") || strings.HasPrefix(mLower, "chatgpt"):
-		return "codex", m
-	case strings.HasPrefix(mLower, "gemini-"):
-		return "antigravity", m
-	case strings.HasPrefix(mLower, "kimi") || strings.HasPrefix(mLower, "moonshot"):
-		return "kimi", m
-	case strings.HasPrefix(mLower, "qwen"):
-		return "qwen", m
-	case strings.HasPrefix(mLower, "grok"):
-		return "grok", m
-	case strings.HasPrefix(mLower, "glm") || strings.HasPrefix(mLower, "zcode") || strings.HasPrefix(mLower, "chatglm"):
-		return "zcode", m
-	default:
-		// Forward any custom or new model ID directly to Mirasim
-		return "", m
-	}
+	return strings.TrimRight(url, "/")
 }
 
-// executeNonStream processes a non-streaming completion.
+// executeNonStream processes a direct pass-through non-streaming completion.
 func executeNonStream(ctx context.Context, cfg pluginConfig, req pluginapi.ExecutorRequest) (pluginapi.ExecutorResponse, error) {
 	body := req.Payload
 	if len(body) == 0 {
 		body = req.OriginalRequest
 	}
 
+	modelName := req.Model
 	var chatReq ChatCompletionRequest
-	if err := json.Unmarshal(body, &chatReq); err != nil {
-		return pluginapi.ExecutorResponse{}, fmt.Errorf("unmarshal chat request: %w", err)
+	if err := json.Unmarshal(body, &chatReq); err == nil && chatReq.Model != "" {
+		modelName = chatReq.Model
 	}
 
-	prompt := ConvertMessagesToPrompt(chatReq.Messages)
-	if prompt == "" {
-		return pluginapi.ExecutorResponse{}, fmt.Errorf("empty prompt")
+	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim/")
+	token := resolveActiveToken(cfg)
+	if token == "" {
+		return pluginapi.ExecutorResponse{}, fmt.Errorf("no Mirasim authentication token found; please log in via OAuth panel or set token in config")
 	}
 
-	modelName := chatReq.Model
-	if modelName == "" {
-		modelName = req.Model
+	relayURL := resolveRelayBaseURL(cfg)
+	isClaude := strings.HasPrefix(strings.ToLower(modelID), "claude")
+
+	var targetURL string
+	var reqBody []byte
+	var err error
+
+	if isClaude {
+		targetURL = relayURL + "/v1/messages"
+		reqBody, err = TranslateOpenAIToClaude(body, modelID)
+		if err != nil {
+			return pluginapi.ExecutorResponse{}, fmt.Errorf("translate request to anthropic: %w", err)
+		}
+	} else {
+		targetURL = relayURL + "/v1/chat/completions"
+		reqBody = body
 	}
 
-	agent, model := MapModelToAgent(modelName)
-
-	client, err := EnsureMirasimClient(cfg)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return pluginapi.ExecutorResponse{}, fmt.Errorf("ensure mirasim client: %w", err)
+		return pluginapi.ExecutorResponse{}, fmt.Errorf("create upstream request: %w", err)
 	}
 
-	events, err := client.ExecuteTurn(ctx, mirasim.TurnOptions{
-		Prompt:     prompt,
-		SessionKey: chatReq.SessionKey,
-		Agent:      agent,
-		Model:      model,
-		Effort:     chatReq.Effort,
-		Workdir:    chatReq.Workdir,
-	})
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-api-key", token)
+	if isClaude {
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	}
+
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return pluginapi.ExecutorResponse{}, fmt.Errorf("execute mirasim turn: %w", err)
+		return pluginapi.ExecutorResponse{}, fmt.Errorf("upstream request failed: %w", err)
 	}
+	defer resp.Body.Close()
 
-	var fullText strings.Builder
-	var fullReasoning strings.Builder
-	var lastUsage *UsageInfo
-	var turnErr error
-
-	for evt := range events {
-		if evt.Error != nil {
-			turnErr = evt.Error
-			break
-		}
-		if evt.AppendText != "" {
-			fullText.WriteString(evt.AppendText)
-		}
-		if evt.AppendReasoning != "" {
-			fullReasoning.WriteString(evt.AppendReasoning)
-		}
-		if evt.Usage != nil {
-			lastUsage = &UsageInfo{
-				PromptTokens:     evt.Usage.InputTokens,
-				CompletionTokens: evt.Usage.OutputTokens,
-				TotalTokens:      evt.Usage.InputTokens + evt.Usage.OutputTokens,
-			}
-		}
-		if evt.Done {
-			break
-		}
-	}
-
-	if turnErr != nil {
-		return pluginapi.ExecutorResponse{}, turnErr
-	}
-
-	resp := ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   modelName,
-		Choices: []ChatChoice{
-			{
-				Index: 0,
-				Message: ChatMessage{
-					Role:             "assistant",
-					Content:          fullText.String(),
-					ReasoningContent: fullReasoning.String(),
-				},
-				FinishReason: "stop",
-			},
-		},
-		Usage: lastUsage,
-	}
-
-	respBytes, err := json.Marshal(resp)
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return pluginapi.ExecutorResponse{}, err
+		return pluginapi.ExecutorResponse{}, fmt.Errorf("read upstream response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return pluginapi.ExecutorResponse{}, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	var finalRespBytes []byte
+	if isClaude {
+		finalRespBytes, err = TranslateClaudeToOpenAIResponse(respBytes, modelID)
+		if err != nil {
+			return pluginapi.ExecutorResponse{}, fmt.Errorf("translate response to openai: %w", err)
+		}
+	} else {
+		finalRespBytes = respBytes
 	}
 
 	return pluginapi.ExecutorResponse{
-		Payload: respBytes,
+		Payload: finalRespBytes,
 		Headers: http.Header{"Content-Type": []string{"application/json"}},
 	}, nil
 }
@@ -369,251 +221,172 @@ type rpcStreamCloseRequest struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// executeStreamRequest handles streaming execution via host callback or synchronous chunks.
+// executeStreamRequest directly forwards and translates streaming completions over HTTP.
 func executeStreamRequest(cfg pluginConfig, req rpcExecutorRequest) (streamResponse, error) {
 	body := req.Payload
 	if len(body) == 0 {
 		body = req.OriginalRequest
 	}
 
+	modelName := req.Model
 	var chatReq ChatCompletionRequest
-	if err := json.Unmarshal(body, &chatReq); err != nil {
-		return streamResponse{}, fmt.Errorf("unmarshal chat request: %w", err)
+	if err := json.Unmarshal(body, &chatReq); err == nil && chatReq.Model != "" {
+		modelName = chatReq.Model
 	}
 
-	prompt := ConvertMessagesToPrompt(chatReq.Messages)
-	if prompt == "" {
-		return streamResponse{}, fmt.Errorf("empty prompt")
+	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim/")
+	token := resolveActiveToken(cfg)
+	if token == "" {
+		return streamResponse{}, fmt.Errorf("no Mirasim authentication token found; please log in via OAuth panel or set token in config")
 	}
 
-	modelName := chatReq.Model
-	if modelName == "" {
-		modelName = req.Model
-	}
+	relayURL := resolveRelayBaseURL(cfg)
+	isClaude := strings.HasPrefix(strings.ToLower(modelID), "claude")
 
-	agent, model := MapModelToAgent(modelName)
+	var targetURL string
+	var reqBody []byte
+	var err error
 
-	client, err := EnsureMirasimClient(cfg)
-	if err != nil {
-		return streamResponse{}, fmt.Errorf("ensure mirasim client: %w", err)
+	if isClaude {
+		targetURL = relayURL + "/v1/messages"
+		reqBody, err = TranslateOpenAIToClaude(body, modelID)
+		if err != nil {
+			return streamResponse{}, fmt.Errorf("translate request to anthropic: %w", err)
+		}
+	} else {
+		targetURL = relayURL + "/v1/chat/completions"
+		reqBody = body
 	}
 
 	ctx := context.Background()
-	events, err := client.ExecuteTurn(ctx, mirasim.TurnOptions{
-		Prompt:     prompt,
-		SessionKey: chatReq.SessionKey,
-		Agent:      agent,
-		Model:      model,
-		Effort:     chatReq.Effort,
-		Workdir:    chatReq.Workdir,
-	})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return streamResponse{}, fmt.Errorf("execute mirasim turn: %w", err)
+		return streamResponse{}, fmt.Errorf("create upstream request: %w", err)
 	}
 
-	reqID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
-	created := time.Now().Unix()
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-api-key", token)
+	if isClaude {
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	}
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return streamResponse{}, fmt.Errorf("upstream request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		errBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return streamResponse{}, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(errBytes))
+	}
+
 	streamHeaders := http.Header{"Content-Type": []string{"text/event-stream"}}
 
 	// If Host supports asynchronous stream emitting via StreamID
 	if req.StreamID != "" {
 		go func() {
-			// Initial chunk
-			initChunk := ChatCompletionChunk{
-				ID:      reqID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   modelName,
-				Choices: []ChatChunkChoice{
-					{
-						Index: 0,
-						Delta: ChatMessageDelta{
-							Role: "assistant",
-						},
-						FinishReason: nil,
-					},
-				},
-			}
-			initBytes, _ := json.Marshal(initChunk)
-			_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-				StreamID: req.StreamID,
-				Payload:  []byte(fmt.Sprintf("data: %s\n\n", initBytes)),
-			})
+			defer resp.Body.Close()
+			defer func() {
+				_, _ = callHost("host.stream.close", rpcStreamCloseRequest{StreamID: req.StreamID})
+			}()
 
-			var lastUsage *UsageInfo
+			reader := bufio.NewReader(resp.Body)
+			state := NewStreamState(modelID)
 
-			for evt := range events {
-				if evt.Error != nil {
-					errChunk := ChatCompletionChunk{
-						ID:      reqID,
-						Object:  "chat.completion.chunk",
-						Created: created,
-						Model:   modelName,
-						Choices: []ChatChunkChoice{
-							{
-								Index: 0,
-								Delta: ChatMessageDelta{
-									Content: fmt.Sprintf("\n[Error: %v]", evt.Error),
-								},
-								FinishReason: nil,
-							},
-						},
+			if isClaude {
+				var currentEvent string
+				for {
+					line, errRead := reader.ReadString('\n')
+					if errRead != nil {
+						break
 					}
-					eb, _ := json.Marshal(errChunk)
-					_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-						StreamID: req.StreamID,
-						Payload:  []byte(fmt.Sprintf("data: %s\n\n", eb)),
-					})
-					break
-				}
+					line = strings.TrimRight(line, "\r\n")
 
-				if evt.Usage != nil {
-					lastUsage = &UsageInfo{
-						PromptTokens:     evt.Usage.InputTokens,
-						CompletionTokens: evt.Usage.OutputTokens,
-						TotalTokens:      evt.Usage.InputTokens + evt.Usage.OutputTokens,
+					if strings.HasPrefix(line, "event:") {
+						currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+						continue
+					}
+					if strings.HasPrefix(line, "data:") {
+						dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+						if dataStr == "" || dataStr == "[DONE]" {
+							continue
+						}
+						chunks := TranslateClaudeEventToOpenAIChunks(currentEvent, []byte(dataStr), state)
+						for _, chunk := range chunks {
+							_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
+								StreamID: req.StreamID,
+								Payload:  chunk,
+							})
+						}
 					}
 				}
-
-				if evt.AppendReasoning != "" {
-					chunk := ChatCompletionChunk{
-						ID:      reqID,
-						Object:  "chat.completion.chunk",
-						Created: created,
-						Model:   modelName,
-						Choices: []ChatChunkChoice{
-							{
-								Index: 0,
-								Delta: ChatMessageDelta{
-									ReasoningContent: evt.AppendReasoning,
-								},
-								FinishReason: nil,
-							},
-						},
+				// Final DONE
+				_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
+					StreamID: req.StreamID,
+					Payload:  []byte("data: [DONE]\n\n"),
+				})
+			} else {
+				// Pure OpenAI stream pass-through
+				for {
+					line, errRead := reader.ReadBytes('\n')
+					if errRead != nil {
+						break
 					}
-					cb, _ := json.Marshal(chunk)
-					_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-						StreamID: req.StreamID,
-						Payload:  []byte(fmt.Sprintf("data: %s\n\n", cb)),
-					})
-				}
-
-				if evt.AppendText != "" {
-					chunk := ChatCompletionChunk{
-						ID:      reqID,
-						Object:  "chat.completion.chunk",
-						Created: created,
-						Model:   modelName,
-						Choices: []ChatChunkChoice{
-							{
-								Index: 0,
-								Delta: ChatMessageDelta{
-									Content: evt.AppendText,
-								},
-								FinishReason: nil,
-							},
-						},
+					if len(line) > 0 {
+						_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
+							StreamID: req.StreamID,
+							Payload:  line,
+						})
 					}
-					cb, _ := json.Marshal(chunk)
-					_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-						StreamID: req.StreamID,
-						Payload:  []byte(fmt.Sprintf("data: %s\n\n", cb)),
-					})
-				}
-
-				if evt.Done {
-					finishReason := "stop"
-					finalChunk := ChatCompletionChunk{
-						ID:      reqID,
-						Object:  "chat.completion.chunk",
-						Created: created,
-						Model:   modelName,
-						Choices: []ChatChunkChoice{
-							{
-								Index:        0,
-								Delta:        ChatMessageDelta{},
-								FinishReason: &finishReason,
-							},
-						},
-						Usage: lastUsage,
-					}
-					fb, _ := json.Marshal(finalChunk)
-					_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-						StreamID: req.StreamID,
-						Payload:  []byte(fmt.Sprintf("data: %s\n\n", fb)),
-					})
-					_, _ = callHost("host.stream.emit", rpcStreamEmitRequest{
-						StreamID: req.StreamID,
-						Payload:  []byte("data: [DONE]\n\n"),
-					})
-					break
 				}
 			}
-
-			_, _ = callHost("host.stream.close", rpcStreamCloseRequest{StreamID: req.StreamID})
 		}()
 
 		return streamResponse{Headers: streamHeaders}, nil
 	}
 
-	// Fallback to synchronous chunks array
+	// Fallback to synchronous chunks collection
+	defer resp.Body.Close()
 	var chunks []pluginapi.ExecutorStreamChunk
+	reader := bufio.NewReader(resp.Body)
+	state := NewStreamState(modelID)
 
-	initChunk := ChatCompletionChunk{
-		ID:      reqID,
-		Object:  "chat.completion.chunk",
-		Created: created,
-		Model:   modelName,
-		Choices: []ChatChunkChoice{{Index: 0, Delta: ChatMessageDelta{Role: "assistant"}}},
-	}
-	initBytes, _ := json.Marshal(initChunk)
-	chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte(fmt.Sprintf("data: %s\n\n", initBytes))})
+	if isClaude {
+		var currentEvent string
+		for {
+			line, errRead := reader.ReadString('\n')
+			if errRead != nil {
+				break
+			}
+			line = strings.TrimRight(line, "\r\n")
 
-	var lastUsage *UsageInfo
-	for evt := range events {
-		if evt.Usage != nil {
-			lastUsage = &UsageInfo{
-				PromptTokens:     evt.Usage.InputTokens,
-				CompletionTokens: evt.Usage.OutputTokens,
-				TotalTokens:      evt.Usage.InputTokens + evt.Usage.OutputTokens,
+			if strings.HasPrefix(line, "event:") {
+				currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
+			if strings.HasPrefix(line, "data:") {
+				dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if dataStr == "" || dataStr == "[DONE]" {
+					continue
+				}
+				translatedChunks := TranslateClaudeEventToOpenAIChunks(currentEvent, []byte(dataStr), state)
+				for _, tc := range translatedChunks {
+					chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: tc})
+				}
 			}
 		}
-		if evt.AppendReasoning != "" {
-			c := ChatCompletionChunk{
-				ID:      reqID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   modelName,
-				Choices: []ChatChunkChoice{{Index: 0, Delta: ChatMessageDelta{ReasoningContent: evt.AppendReasoning}}},
+		chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte("data: [DONE]\n\n")})
+	} else {
+		for {
+			line, errRead := reader.ReadBytes('\n')
+			if errRead != nil {
+				break
 			}
-			cb, _ := json.Marshal(c)
-			chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte(fmt.Sprintf("data: %s\n\n", cb))})
-		}
-		if evt.AppendText != "" {
-			c := ChatCompletionChunk{
-				ID:      reqID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   modelName,
-				Choices: []ChatChunkChoice{{Index: 0, Delta: ChatMessageDelta{Content: evt.AppendText}}},
+			if len(line) > 0 {
+				chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: line})
 			}
-			cb, _ := json.Marshal(c)
-			chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte(fmt.Sprintf("data: %s\n\n", cb))})
-		}
-		if evt.Done {
-			finishReason := "stop"
-			fc := ChatCompletionChunk{
-				ID:      reqID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   modelName,
-				Choices: []ChatChunkChoice{{Index: 0, Delta: ChatMessageDelta{}, FinishReason: &finishReason}},
-				Usage:   lastUsage,
-			}
-			fb, _ := json.Marshal(fc)
-			chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte(fmt.Sprintf("data: %s\n\n", fb))})
-			chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: []byte("data: [DONE]\n\n")})
-			break
 		}
 	}
 

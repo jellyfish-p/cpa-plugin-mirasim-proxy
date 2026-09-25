@@ -68,7 +68,7 @@ func TestModelStaticNoHarnessExposed(t *testing.T) {
 		t.Fatalf("expected at least 1 static model, got 0")
 	}
 
-	// Harness names that must NOT be exposed as model IDs
+	// Harness execution runners that must NEVER be exposed as model IDs
 	harnessNames := []string{
 		"mirasim/pi",
 		"mirasim/claude",
@@ -95,29 +95,119 @@ func TestModelStaticNoHarnessExposed(t *testing.T) {
 	}
 }
 
-func TestMapModelToAgent(t *testing.T) {
-	cases := []struct {
-		input       string
-		wantAgent   string
-		wantModel   string
-	}{
-		{"mirasim/claude-3-7-sonnet", "claude", "claude-3-7-sonnet"},
-		{"mirasim/claude-3-5-sonnet", "claude", "claude-3-5-sonnet"},
-		{"mirasim/gpt-4o", "codex", "gpt-4o"},
-		{"mirasim/o1", "codex", "o1"},
-		{"mirasim/gemini-2.5-pro", "antigravity", "gemini-2.5-pro"},
-		{"mirasim/kimi-k1.5", "kimi", "kimi-k1.5"},
-		{"mirasim/qwen-2.5-coder-32b", "qwen", "qwen-2.5-coder-32b"},
-		{"mirasim/grok-2", "grok", "grok-2"},
-		{"mirasim/glm-4", "zcode", "glm-4"},
-		{"mirasim/deepseek-r1", "", "deepseek-r1"},
+func TestTranslateOpenAIToClaude(t *testing.T) {
+	openaiPayload := []byte(`{
+		"model": "mirasim/claude-3-7-sonnet",
+		"messages": [
+			{"role": "system", "content": "You are a helpful assistant."},
+			{"role": "user", "content": "Hello world!"}
+		],
+		"max_tokens": 1024,
+		"stream": true
+	}`)
+
+	claudeBody, err := TranslateOpenAIToClaude(openaiPayload, "claude-3-7-sonnet")
+	if err != nil {
+		t.Fatalf("TranslateOpenAIToClaude error: %v", err)
 	}
 
-	for _, tc := range cases {
-		agent, model := MapModelToAgent(tc.input)
-		if agent != tc.wantAgent || model != tc.wantModel {
-			t.Errorf("MapModelToAgent(%q) = (%q, %q), want (%q, %q)", tc.input, agent, model, tc.wantAgent, tc.wantModel)
+	var parsed map[string]any
+	if err := json.Unmarshal(claudeBody, &parsed); err != nil {
+		t.Fatalf("unmarshal translated body: %v", err)
+	}
+
+	if parsed["model"] != "claude-3-7-sonnet" {
+		t.Errorf("expected model=claude-3-7-sonnet, got %v", parsed["model"])
+	}
+	if parsed["system"] != "You are a helpful assistant." {
+		t.Errorf("expected system='You are a helpful assistant.', got %v", parsed["system"])
+	}
+
+	msgs, ok := parsed["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("expected 1 user message, got %v", parsed["messages"])
+	}
+	userMsg := msgs[0].(map[string]any)
+	if userMsg["role"] != "user" || userMsg["content"] != "Hello world!" {
+		t.Errorf("unexpected user message: %+v", userMsg)
+	}
+}
+
+func TestTranslateClaudeToOpenAIResponse(t *testing.T) {
+	claudeResp := []byte(`{
+		"id": "msg_01XyZ",
+		"type": "message",
+		"role": "assistant",
+		"content": [
+			{"type": "thinking", "thinking": "Thinking step..."},
+			{"type": "text", "text": "Final answer here."}
+		],
+		"stop_reason": "end_turn",
+		"usage": {
+			"input_tokens": 25,
+			"output_tokens": 15
 		}
+	}`)
+
+	openAIBytes, err := TranslateClaudeToOpenAIResponse(claudeResp, "claude-3-7-sonnet")
+	if err != nil {
+		t.Fatalf("TranslateClaudeToOpenAIResponse error: %v", err)
+	}
+
+	var resp ChatCompletionResponse
+	if err := json.Unmarshal(openAIBytes, &resp); err != nil {
+		t.Fatalf("unmarshal openai response: %v", err)
+	}
+
+	if len(resp.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(resp.Choices))
+	}
+	c := resp.Choices[0]
+	if c.Message.Content != "Final answer here." {
+		t.Errorf("content mismatch: %s", c.Message.Content)
+	}
+	if c.Message.ReasoningContent != "Thinking step..." {
+		t.Errorf("reasoning content mismatch: %s", c.Message.ReasoningContent)
+	}
+	if resp.Usage.PromptTokens != 25 || resp.Usage.CompletionTokens != 15 {
+		t.Errorf("usage mismatch: %+v", resp.Usage)
+	}
+}
+
+func TestTranslateClaudeStream(t *testing.T) {
+	state := NewStreamState("claude-3-7-sonnet")
+
+	// 1. message_start
+	c1 := TranslateClaudeEventToOpenAIChunks("message_start", []byte(`{"type":"message_start","message":{"id":"msg_123"}}`), state)
+	if len(c1) == 0 {
+		t.Fatalf("expected chunk for message_start")
+	}
+
+	// 2. thinking delta
+	c2 := TranslateClaudeEventToOpenAIChunks("content_block_delta", []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think"}}`), state)
+	if len(c2) == 0 {
+		t.Fatalf("expected chunk for thinking_delta")
+	}
+	if !strings.Contains(string(c2[0]), "reasoning_content") || !strings.Contains(string(c2[0]), "let me think") {
+		t.Errorf("expected reasoning_content chunk, got %s", string(c2[0]))
+	}
+
+	// 3. text delta
+	c3 := TranslateClaudeEventToOpenAIChunks("content_block_delta", []byte(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello user"}}`), state)
+	if len(c3) == 0 {
+		t.Fatalf("expected chunk for text_delta")
+	}
+	if !strings.Contains(string(c3[0]), "hello user") {
+		t.Errorf("expected text chunk, got %s", string(c3[0]))
+	}
+
+	// 4. message_delta
+	c4 := TranslateClaudeEventToOpenAIChunks("message_delta", []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}`), state)
+	if len(c4) == 0 {
+		t.Fatalf("expected chunk for message_delta")
+	}
+	if !strings.Contains(string(c4[0]), `"finish_reason":"stop"`) {
+		t.Errorf("expected finish_reason=stop, got %s", string(c4[0]))
 	}
 }
 

@@ -106,24 +106,14 @@ func pluginRegistration() registration {
 					Description: "Whether the Mirasim executor is enabled",
 				},
 				{
-					Name:        "port",
-					Type:        pluginapi.ConfigFieldTypeInteger,
-					Description: "Local Mirasim server port (default 4939)",
-				},
-				{
-					Name:        "ws_url",
+					Name:        "relay_url",
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Explicit WebSocket URL for Mirasim server (ws://...)",
+					Description: "Mirasim Relay / Gateway URL (default: https://relay.mirasim.ai)",
 				},
 				{
-					Name:        "server_script",
+					Name:        "token",
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Path to server.cjs script",
-				},
-				{
-					Name:        "auto_spawn",
-					Type:        pluginapi.ConfigFieldTypeBoolean,
-					Description: "Whether to auto-launch server.cjs if not running",
+					Description: "Manual authentication token (or configure via OAuth)",
 				},
 			},
 		},
@@ -159,12 +149,6 @@ func handlePluginMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]bool{"quiesced": true})
 
 	case pluginabi.MethodPluginShutdown:
-		mirasimClientMu.Lock()
-		if processMgr != nil {
-			_ = processMgr.Stop()
-			processMgr = nil
-		}
-		mirasimClientMu.Unlock()
 		return okEnvelope(map[string]bool{"shutdown": true})
 
 	case pluginabi.MethodModelStatic:

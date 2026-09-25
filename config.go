@@ -5,20 +5,17 @@ import (
 )
 
 type pluginConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Priority     int    `yaml:"priority"`
-	MirasimPort  int    `yaml:"port"`
-	ServerScript string `yaml:"server_script"`
-	WsURL        string `yaml:"ws_url"`
-	AutoSpawn    bool   `yaml:"auto_spawn"`
+	Enabled  bool   `yaml:"enabled"`
+	Priority int    `yaml:"priority"`
+	RelayURL string `yaml:"relay_url"`
+	Token    string `yaml:"token"`
 }
 
 func defaultPluginConfig() pluginConfig {
 	return pluginConfig{
-		Enabled:     true,
-		Priority:    1,
-		MirasimPort: 4939,
-		AutoSpawn:   true,
+		Enabled:  true,
+		Priority: 1,
+		RelayURL: "https://relay.mirasim.ai",
 	}
 }
 
@@ -29,8 +26,8 @@ func decodeConfig(raw []byte) (pluginConfig, error) {
 			return cfg, err
 		}
 	}
-	if cfg.MirasimPort <= 0 {
-		cfg.MirasimPort = 4939
+	if cfg.RelayURL == "" {
+		cfg.RelayURL = "https://relay.mirasim.ai"
 	}
 	return cfg, nil
 }

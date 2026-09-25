@@ -14,33 +14,25 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
-	"github.com/router-for-me/cliproxy-plugin-mirasim/mirasim"
 )
 
 var (
 	currentAuthTokenMu sync.RWMutex
 	currentAuthToken   string
-	currentWsURL       string
+	currentRelayURL    string
 )
 
-func SetActiveAuth(token, wsURL string) {
+func SetActiveAuth(token, relayURL string) {
 	currentAuthTokenMu.Lock()
 	defer currentAuthTokenMu.Unlock()
 	currentAuthToken = token
-	currentWsURL = wsURL
-
-	// If client exists, update its URL
-	mirasimClientMu.Lock()
-	if mirasimClient != nil && wsURL != "" {
-		mirasimClient.UpdateURL(wsURL)
-	}
-	mirasimClientMu.Unlock()
+	currentRelayURL = relayURL
 }
 
-func GetActiveAuth() (token, wsURL string) {
+func GetActiveAuth() (token, relayURL string) {
 	currentAuthTokenMu.RLock()
 	defer currentAuthTokenMu.RUnlock()
-	return currentAuthToken, currentWsURL
+	return currentAuthToken, currentRelayURL
 }
 
 func generateRandomState() string {
@@ -92,6 +84,42 @@ func extractTokenFromCode(raw string) string {
 	return raw
 }
 
+// discoverLocalToken attempts to read an active token from ~/.mirasim/ setting or run files without spawning processes.
+func discoverLocalToken() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	// 1. Try ~/.mirasim/setting.json
+	settingPath := filepath.Join(home, ".mirasim", "setting.json")
+	if data, err := os.ReadFile(settingPath); err == nil {
+		var setting struct {
+			MirachannelToken string `json:"mirachannelToken"`
+		}
+		if err := json.Unmarshal(data, &setting); err == nil && setting.MirachannelToken != "" {
+			return setting.MirachannelToken
+		}
+	}
+
+	// 2. Try ~/.mirasim/run/local-*.token
+	runDir := filepath.Join(home, ".mirasim", "run")
+	if entries, err := os.ReadDir(runDir); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "local-") && strings.HasSuffix(e.Name(), ".token") {
+				if tokBytes, err := os.ReadFile(filepath.Join(runDir, e.Name())); err == nil {
+					tok := strings.TrimSpace(string(tokBytes))
+					if tok != "" {
+						return tok
+					}
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
 func handleAuthIdentifier() any {
 	return map[string]string{"identifier": pluginIdentifier}
 }
@@ -103,11 +131,10 @@ func handleAuthParse(req pluginapi.AuthParseRequest) (pluginapi.AuthParseRespons
 	}
 
 	var data struct {
-		Type   string `json:"type"`
-		Token  string `json:"token"`
-		WsURL  string `json:"ws_url"`
-		Port   int    `json:"port"`
-		APIKey string `json:"api_key"`
+		Type     string `json:"type"`
+		Token    string `json:"token"`
+		RelayURL string `json:"relay_url"`
+		APIKey   string `json:"api_key"`
 	}
 
 	if len(req.RawJSON) > 0 {
@@ -126,18 +153,13 @@ func handleAuthParse(req pluginapi.AuthParseRequest) (pluginapi.AuthParseRespons
 		token = data.APIKey
 	}
 
-	port := data.Port
-	if port <= 0 {
-		port = loadedConfig().MirasimPort
-	}
-
-	wsURL := data.WsURL
-	if wsURL == "" && token != "" {
-		wsURL = fmt.Sprintf("ws://127.0.0.1:%d/ws?token=%s", port, token)
+	relayURL := data.RelayURL
+	if relayURL == "" {
+		relayURL = resolveRelayBaseURL(loadedConfig())
 	}
 
 	if token != "" {
-		SetActiveAuth(token, wsURL)
+		SetActiveAuth(token, relayURL)
 	}
 
 	id := req.FileName
@@ -153,28 +175,25 @@ func handleAuthParse(req pluginapi.AuthParseRequest) (pluginapi.AuthParseRespons
 			FileName:    id,
 			StorageJSON: req.RawJSON,
 			Metadata: map[string]any{
-				"type":  pluginIdentifier,
-				"token": token,
-				"port":  port,
+				"type":      pluginIdentifier,
+				"token":     token,
+				"relay_url": relayURL,
 			},
 		},
 	}, nil
 }
 
 func handleAuthLoginStart(req pluginapi.AuthLoginStartRequest) (pluginapi.AuthLoginStartResponse, error) {
-	cfg := loadedConfig()
-	port := cfg.MirasimPort
-
 	state := generateRandomState()
 	baseURL := req.BaseURL
 
 	// Authorization URL:
-	// Points to Mirasim web interface or auth endpoint
+	// Points to Mirasim web auth or login gateway
 	var authURL string
 	if baseURL != "" {
-		authURL = fmt.Sprintf("http://127.0.0.1:%d/?redirect_uri=%s&state=%s", port, url.QueryEscape(baseURL), state)
+		authURL = fmt.Sprintf("https://auth.mirasim.ai/?redirect_uri=%s&state=%s", url.QueryEscape(baseURL), state)
 	} else {
-		authURL = fmt.Sprintf("http://127.0.0.1:%d/?state=%s", port, state)
+		authURL = fmt.Sprintf("https://auth.mirasim.ai/?state=%s", state)
 	}
 
 	return pluginapi.AuthLoginStartResponse{
@@ -185,7 +204,6 @@ func handleAuthLoginStart(req pluginapi.AuthLoginStartRequest) (pluginapi.AuthLo
 		Metadata: map[string]any{
 			"state":        state,
 			"redirect_uri": baseURL,
-			"port":         port,
 		},
 	}, nil
 }
@@ -198,7 +216,7 @@ type oauthCallbackFilePayload struct {
 
 func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest) (pluginapi.AuthLoginPollResponse, error) {
 	cfg := loadedConfig()
-	port := cfg.MirasimPort
+	relayURL := resolveRelayBaseURL(cfg)
 
 	// 1. Check for callback file written by CLIProxyAPI when user pastes callback URL in WebUI panel
 	authDir := req.Host.AuthDir
@@ -218,14 +236,12 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 
 				token := extractTokenFromCode(cb.Code)
 				if token != "" {
-					wsURL := fmt.Sprintf("ws://127.0.0.1:%d/ws?token=%s", port, token)
-					SetActiveAuth(token, wsURL)
+					SetActiveAuth(token, relayURL)
 
 					storageData, _ := json.Marshal(map[string]any{
-						"type":   pluginIdentifier,
-						"token":  token,
-						"ws_url": wsURL,
-						"port":   port,
+						"type":      pluginIdentifier,
+						"token":     token,
+						"relay_url": relayURL,
 					})
 
 					return pluginapi.AuthLoginPollResponse{
@@ -236,8 +252,9 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 							FileName:    "mirasim.json",
 							StorageJSON: storageData,
 							Metadata: map[string]any{
-								"type":  pluginIdentifier,
-								"token": token,
+								"type":      pluginIdentifier,
+								"token":     token,
+								"relay_url": relayURL,
 							},
 						},
 					}, nil
@@ -246,17 +263,14 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 		}
 	}
 
-	// 2. Check if local Mirasim instance is actively running
-	instances, err := mirasim.FindActiveInstances()
-	if err == nil && len(instances) > 0 {
-		inst := instances[0]
-		SetActiveAuth(inst.Token, inst.WsURL)
+	// 2. Check if local token is discoverable from settings
+	if tok := discoverLocalToken(); tok != "" {
+		SetActiveAuth(tok, relayURL)
 
 		storageData, _ := json.Marshal(map[string]any{
-			"type":   pluginIdentifier,
-			"token":  inst.Token,
-			"ws_url": inst.WsURL,
-			"port":   inst.Port,
+			"type":      pluginIdentifier,
+			"token":     tok,
+			"relay_url": relayURL,
 		})
 
 		return pluginapi.AuthLoginPollResponse{
@@ -267,9 +281,9 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 				FileName:    "mirasim.json",
 				StorageJSON: storageData,
 				Metadata: map[string]any{
-					"type":  pluginIdentifier,
-					"token": inst.Token,
-					"port":  inst.Port,
+					"type":      pluginIdentifier,
+					"token":     tok,
+					"relay_url": relayURL,
 				},
 			},
 		}, nil
@@ -282,24 +296,23 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 }
 
 func handleAuthRefresh(req pluginapi.AuthRefreshRequest) (pluginapi.AuthRefreshResponse, error) {
-	// Re-verify or reload active credentials
-	token, wsURL := GetActiveAuth()
+	token, relayURL := GetActiveAuth()
 	if token == "" {
 		var data struct {
-			Token string `json:"token"`
-			WsURL string `json:"ws_url"`
+			Token    string `json:"token"`
+			RelayURL string `json:"relay_url"`
 		}
 		if len(req.StorageJSON) > 0 {
 			_ = json.Unmarshal(req.StorageJSON, &data)
 			token = data.Token
-			wsURL = data.WsURL
+			relayURL = data.RelayURL
 		}
 	}
 
 	storageData, _ := json.Marshal(map[string]any{
-		"type":   pluginIdentifier,
-		"token":  token,
-		"ws_url": wsURL,
+		"type":      pluginIdentifier,
+		"token":     token,
+		"relay_url": relayURL,
 	})
 
 	return pluginapi.AuthRefreshResponse{
