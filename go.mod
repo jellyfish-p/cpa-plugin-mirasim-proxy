@@ -1,9 +1,9 @@
-module github.com/router-for-me/cliproxy-plugin-mirasim
+module github.com/jellyfish-p/cpa-plugin-mirasim-proxy
 
 go 1.26.0
 
 require (
-	github.com/router-for-me/CLIProxyAPI/v7 v7.0.0
+	github.com/router-for-me/CLIProxyAPI/v7 v7.3.17
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -15,5 +15,3 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
-
-replace github.com/router-for-me/CLIProxyAPI/v7 => ../../CLIProxyAPI
