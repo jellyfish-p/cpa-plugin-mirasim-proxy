@@ -56,11 +56,11 @@ jobs:
             ext: so
           - goos: darwin
             goarch: amd64
-            runner: macos-13
+            runner: macos-15-intel
             ext: dylib
           - goos: darwin
             goarch: arm64
-            runner: macos-14
+            runner: macos-15
             ext: dylib
           - goos: windows
             goarch: amd64
