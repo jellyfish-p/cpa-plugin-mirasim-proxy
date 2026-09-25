@@ -111,6 +111,65 @@ func TestModelStaticNoHarnessExposed(t *testing.T) {
 	}
 }
 
+func TestCatalogValidationAndDynamicUpdate(t *testing.T) {
+	initialRevision := GetCatalogRevision()
+	if initialRevision == 0 {
+		t.Fatalf("expected non-zero initial revision")
+	}
+
+	customCatalog := []byte(`{
+		"models": [
+			{
+				"slug": "custom-experimental-model",
+				"display_name": "Custom Experimental Model",
+				"context_window": 128000,
+				"owned_by": "custom"
+			},
+			{
+				"slug": "claude-3-7-sonnet",
+				"display_name": "Claude 3.7 Sonnet (Thinking)",
+				"context_window": 200000,
+				"owned_by": "anthropic"
+			}
+		]
+	}`)
+
+	models, err := ValidateCatalogJSON(customCatalog)
+	if err != nil {
+		t.Fatalf("ValidateCatalogJSON failed: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(models))
+	}
+
+	err = loadCatalogFromBytes(customCatalog, "test")
+	if err != nil {
+		t.Fatalf("loadCatalogFromBytes failed: %v", err)
+	}
+
+	newRevision := GetCatalogRevision()
+	if newRevision <= initialRevision {
+		t.Errorf("expected revision to increase from %d, got %d", initialRevision, newRevision)
+	}
+
+	current := GetModelsCatalog()
+	foundCustom := false
+	for _, m := range current {
+		if m.ID == "mirasim/custom-experimental-model" {
+			foundCustom = true
+			if m.DisplayName != "Custom Experimental Model" {
+				t.Errorf("expected display name 'Custom Experimental Model', got %s", m.DisplayName)
+			}
+		}
+	}
+	if !foundCustom {
+		t.Errorf("custom-experimental-model not found in updated catalog")
+	}
+
+	// Restore embedded models
+	_ = loadCatalogFromBytes(embeddedModelsJSON, "restore")
+}
+
 func TestTranslateOpenAIToClaude(t *testing.T) {
 	openaiPayload := []byte(`{
 		"model": "mirasim/claude-3-7-sonnet",

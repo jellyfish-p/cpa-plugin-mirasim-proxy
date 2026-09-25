@@ -1,0 +1,224 @@
+{
+  "models": [
+    {
+      "slug": "claude-3-7-sonnet",
+      "display_name": "Claude 3.7 Sonnet (Thinking)",
+      "owned_by": "anthropic",
+      "description": "Hybrid model with fast responses or extended thinking for complex reasoning and coding.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "supports_thinking": true,
+      "type": "chat"
+    },
+    {
+      "slug": "claude-3-5-sonnet",
+      "display_name": "Claude 3.5 Sonnet",
+      "owned_by": "anthropic",
+      "description": "Anthropic high-performance model for reasoning, coding, and general tasks.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "type": "chat"
+    },
+    {
+      "slug": "claude-3-5-haiku",
+      "display_name": "Claude 3.5 Haiku",
+      "owned_by": "anthropic",
+      "description": "Anthropic fast and lightweight model with strong intelligence.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "type": "chat"
+    },
+    {
+      "slug": "claude-opus-5-5",
+      "display_name": "Claude Opus 5.5",
+      "owned_by": "anthropic",
+      "description": "Next-generation Claude Opus large language model.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "type": "chat"
+    },
+    {
+      "slug": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "owned_by": "anthropic",
+      "description": "Next-generation Claude Sonnet model with adaptive reasoning.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "type": "chat"
+    },
+    {
+      "slug": "claude-haiku-4-5",
+      "display_name": "Claude Haiku 4.5",
+      "owned_by": "anthropic",
+      "description": "Fast and responsive next-generation Claude Haiku model.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "type": "chat"
+    },
+    {
+      "slug": "gpt-4o",
+      "display_name": "GPT-4o",
+      "owned_by": "openai",
+      "description": "OpenAI flagship high-intelligence multimodal model.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "gpt-4o-mini",
+      "display_name": "GPT-4o Mini",
+      "owned_by": "openai",
+      "description": "OpenAI compact and cost-efficient multimodal model.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "o1",
+      "display_name": "o1",
+      "owned_by": "openai",
+      "description": "OpenAI reasoning model for complex STEM, coding, and logical tasks.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "supports_thinking": true,
+      "type": "chat"
+    },
+    {
+      "slug": "o3-mini",
+      "display_name": "o3-mini",
+      "owned_by": "openai",
+      "description": "OpenAI fast reasoning model optimized for science, math, and coding.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "supports_thinking": true,
+      "type": "chat"
+    },
+    {
+      "slug": "gpt-6-astra",
+      "display_name": "GPT-6 Astra",
+      "owned_by": "openai",
+      "description": "OpenAI next-generation model for complex, demanding agentic work.",
+      "context_window": 872000,
+      "max_context_window": 872000,
+      "type": "chat"
+    },
+    {
+      "slug": "gpt-5.6-sol",
+      "display_name": "GPT-5.6 Sol",
+      "owned_by": "openai",
+      "description": "Advanced OpenAI model optimized for deep coding and architectural planning.",
+      "context_window": 372000,
+      "max_context_window": 372000,
+      "type": "chat"
+    },
+    {
+      "slug": "gemini-2.5-pro",
+      "display_name": "Gemini 2.5 Pro",
+      "owned_by": "google",
+      "description": "Google state-of-the-art model with massive context and advanced reasoning.",
+      "context_window": 2000000,
+      "max_context_window": 2000000,
+      "type": "chat"
+    },
+    {
+      "slug": "gemini-2.0-flash",
+      "display_name": "Gemini 2.0 Flash",
+      "owned_by": "google",
+      "description": "Google next-gen low latency, high throughput multimodal model.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "type": "chat"
+    },
+    {
+      "slug": "deepseek-chat",
+      "display_name": "DeepSeek V3",
+      "owned_by": "deepseek",
+      "description": "DeepSeek general purpose high capability language model.",
+      "context_window": 64000,
+      "max_context_window": 64000,
+      "type": "chat"
+    },
+    {
+      "slug": "deepseek-reasoner",
+      "display_name": "DeepSeek R1",
+      "owned_by": "deepseek",
+      "description": "DeepSeek reasoning model with open-source thinking process.",
+      "context_window": 64000,
+      "max_context_window": 64000,
+      "supports_thinking": true,
+      "type": "chat"
+    },
+    {
+      "slug": "deepseek-flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "owned_by": "deepseek",
+      "description": "DeepSeek high-speed reasoning model.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "type": "chat"
+    },
+    {
+      "slug": "kimi-k1.5",
+      "display_name": "Kimi k1.5",
+      "owned_by": "moonshot",
+      "description": "Moonshot long-context language model.",
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "type": "chat"
+    },
+    {
+      "slug": "kimi-k3",
+      "display_name": "Kimi k3",
+      "owned_by": "moonshot",
+      "description": "Moonshot next-generation large model with extended reasoning.",
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "type": "chat"
+    },
+    {
+      "slug": "qwen-2.5-coder-32b",
+      "display_name": "Qwen 2.5 Coder 32B",
+      "owned_by": "alibaba",
+      "description": "Alibaba state-of-the-art open coding model.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "qwen-2.5-72b",
+      "display_name": "Qwen 2.5 72B",
+      "owned_by": "alibaba",
+      "description": "Alibaba flagship open weights language model.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "grok-2",
+      "display_name": "Grok 2",
+      "owned_by": "xai",
+      "description": "xAI frontier language model with real-time reasoning.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "glm-4",
+      "display_name": "GLM-4",
+      "owned_by": "zhipu",
+      "description": "Zhipu AI flagship general language model.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "type": "chat"
+    },
+    {
+      "slug": "glm-5.3-flash",
+      "display_name": "GLM-5.3 Flash",
+      "owned_by": "zhipu",
+      "description": "Zhipu AI next-generation fast reasoning model.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "type": "chat"
+    }
+  ]
+}

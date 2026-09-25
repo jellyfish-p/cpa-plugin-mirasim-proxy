@@ -152,17 +152,20 @@ func handlePluginMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]bool{"shutdown": true})
 
 	case pluginabi.MethodModelStatic:
-		return okEnvelope(staticModels())
+		return okEnvelope(GetModelsCatalog())
 
 	case pluginabi.MethodModelForAuth:
 		token, relayURL := GetActiveAuth()
 		if token == "" {
 			token = resolveActiveToken(loadedConfig())
 		}
-		models := fetchUpstreamModels(token, relayURL)
+		if relayURL == "" {
+			relayURL = resolveRelayBaseURL(loadedConfig())
+		}
+		_, _ = RefreshModelsFromUpstream(context.Background(), token, relayURL)
 		return okEnvelope(pluginapi.ModelResponse{
 			Provider: pluginIdentifier,
-			Models:   models,
+			Models:   GetModelsCatalog(),
 		})
 
 	case pluginabi.MethodExecutorIdentifier:

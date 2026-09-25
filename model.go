@@ -1,279 +1,258 @@
 package main
 
 import (
+	"context"
+	_ "embed"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// staticModels returns the comprehensive list of pure model IDs supported by Mirasim.
-// Zero harness names are exposed; all models strictly use the mirasim/{model_id} namespace.
-func staticModels() []pluginapi.ModelInfo {
-	created := time.Now().Unix()
-	return []pluginapi.ModelInfo{
-		// --- Claude (Anthropic) ---
-		{
-			ID:          "mirasim/claude-3-7-sonnet",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude 3.7 Sonnet (Thinking)",
-		},
-		{
-			ID:          "mirasim/claude-3-5-sonnet",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude 3.5 Sonnet",
-		},
-		{
-			ID:          "mirasim/claude-3-5-haiku",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude 3.5 Haiku",
-		},
-		{
-			ID:          "mirasim/claude-opus-5-5",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude Opus 5.5",
-		},
-		{
-			ID:          "mirasim/claude-sonnet-5",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude Sonnet 5",
-		},
-		{
-			ID:          "mirasim/claude-haiku-4-5",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "anthropic",
-			Type:        "chat",
-			DisplayName: "Claude Haiku 4.5",
-		},
+//go:embed models/mirasim_models.json
+var embeddedModelsJSON []byte
 
-		// --- OpenAI / Codex ---
-		{
-			ID:          "mirasim/gpt-4o",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "GPT-4o",
-		},
-		{
-			ID:          "mirasim/gpt-4o-mini",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "GPT-4o Mini",
-		},
-		{
-			ID:          "mirasim/o1",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "o1",
-		},
-		{
-			ID:          "mirasim/o3-mini",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "o3-mini",
-		},
-		{
-			ID:          "mirasim/gpt-6-astra",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "GPT-6 Astra",
-		},
-		{
-			ID:          "mirasim/gpt-5.6-sol",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "openai",
-			Type:        "chat",
-			DisplayName: "GPT-5.6 Sol",
-		},
+type catalogFilePayload struct {
+	Models []catalogModelItem `json:"models"`
+}
 
-		// --- Google (Gemini) ---
-		{
-			ID:          "mirasim/gemini-2.5-pro",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "google",
-			Type:        "chat",
-			DisplayName: "Gemini 2.5 Pro",
-		},
-		{
-			ID:          "mirasim/gemini-2.0-flash",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "google",
-			Type:        "chat",
-			DisplayName: "Gemini 2.0 Flash",
-		},
+type catalogModelItem struct {
+	Slug             string `json:"slug"`
+	ID               string `json:"id"`
+	DisplayName      string `json:"display_name"`
+	Label            string `json:"label"`
+	OwnedBy          string `json:"owned_by"`
+	Description      string `json:"description"`
+	ContextWindow    int    `json:"context_window"`
+	MaxContextWindow int    `json:"max_context_window"`
+	SupportsThinking bool   `json:"supports_thinking"`
+	Type             string `json:"type"`
+}
 
-		// --- DeepSeek ---
-		{
-			ID:          "mirasim/deepseek-chat",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "deepseek",
-			Type:        "chat",
-			DisplayName: "DeepSeek V3",
-		},
-		{
-			ID:          "mirasim/deepseek-reasoner",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "deepseek",
-			Type:        "chat",
-			DisplayName: "DeepSeek R1",
-		},
-		{
-			ID:          "mirasim/deepseek-flash",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "deepseek",
-			Type:        "chat",
-			DisplayName: "DeepSeek V4.1 Flash",
-		},
+type mirasimCatalogStore struct {
+	mu          sync.RWMutex
+	models      []pluginapi.ModelInfo
+	bySlug      map[string]pluginapi.ModelInfo
+	revision    uint64
+	lastUpdated time.Time
+}
 
-		// --- Kimi (Moonshot) ---
-		{
-			ID:          "mirasim/kimi-k1.5",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "moonshot",
-			Type:        "chat",
-			DisplayName: "Kimi k1.5",
-		},
-		{
-			ID:          "mirasim/kimi-k3",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "moonshot",
-			Type:        "chat",
-			DisplayName: "Kimi k3",
-		},
+var catalogStore = &mirasimCatalogStore{
+	bySlug: make(map[string]pluginapi.ModelInfo),
+}
 
-		// --- Qwen (Alibaba) ---
-		{
-			ID:          "mirasim/qwen-2.5-coder-32b",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "alibaba",
-			Type:        "chat",
-			DisplayName: "Qwen 2.5 Coder 32B",
-		},
-		{
-			ID:          "mirasim/qwen-2.5-72b",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "alibaba",
-			Type:        "chat",
-			DisplayName: "Qwen 2.5 72B",
-		},
+var updaterOnce sync.Once
 
-		// --- xAI ---
-		{
-			ID:          "mirasim/grok-2",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "xai",
-			Type:        "chat",
-			DisplayName: "Grok 2",
-		},
-
-		// --- Zhipu (GLM) ---
-		{
-			ID:          "mirasim/glm-4",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "zhipu",
-			Type:        "chat",
-			DisplayName: "GLM-4",
-		},
-		{
-			ID:          "mirasim/glm-5.3-flash",
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     "zhipu",
-			Type:        "chat",
-			DisplayName: "GLM-5.3 Flash",
-		},
+func init() {
+	if err := loadCatalogFromBytes(embeddedModelsJSON, "embedded"); err != nil {
+		fmt.Printf("mirasim: warning: failed to parse embedded mirasim_models.json: %v\n", err)
 	}
 }
 
-// fetchUpstreamModels queries https://relay.mirasim.ai/v1/models if a token is available.
-func fetchUpstreamModels(token, relayURL string) []pluginapi.ModelInfo {
-	if token == "" {
-		return staticModels()
+// StartModelCatalogUpdater starts a background updater similar to Codex's periodic model refresh.
+func StartModelCatalogUpdater(ctx context.Context) {
+	updaterOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					cfg := loadedConfig()
+					tok := resolveActiveToken(cfg)
+					relayURL := resolveRelayBaseURL(cfg)
+					_, _ = RefreshModelsFromUpstream(ctx, tok, relayURL)
+				}
+			}
+		}()
+	})
+}
+
+// GetModelsCatalog returns a snapshot of all currently available models.
+func GetModelsCatalog() []pluginapi.ModelInfo {
+	catalogStore.mu.RLock()
+	defer catalogStore.mu.RUnlock()
+	copied := make([]pluginapi.ModelInfo, len(catalogStore.models))
+	copy(copied, catalogStore.models)
+	return copied
+}
+
+// GetCatalogRevision returns the current revision number.
+func GetCatalogRevision() uint64 {
+	catalogStore.mu.RLock()
+	defer catalogStore.mu.RUnlock()
+	return catalogStore.revision
+}
+
+// ValidateCatalogJSON validates and parses raw model catalog JSON into ModelInfo items.
+func ValidateCatalogJSON(data []byte) ([]pluginapi.ModelInfo, error) {
+	var payload catalogFilePayload
+	if err := json.Unmarshal(data, &payload); err == nil && len(payload.Models) > 0 {
+		return parseCatalogItems(payload.Models)
 	}
 
+	// Try OpenAI format { "data": [ ... ] }
+	var openAIPayload struct {
+		Data []catalogModelItem `json:"data"`
+	}
+	if err := json.Unmarshal(data, &openAIPayload); err == nil && len(openAIPayload.Data) > 0 {
+		return parseCatalogItems(openAIPayload.Data)
+	}
+
+	// Try pure array [ ... ]
+	var arrayPayload []catalogModelItem
+	if err := json.Unmarshal(data, &arrayPayload); err == nil && len(arrayPayload) > 0 {
+		return parseCatalogItems(arrayPayload)
+	}
+
+	return nil, fmt.Errorf("catalog JSON has no recognized models array")
+}
+
+func parseCatalogItems(items []catalogModelItem) ([]pluginapi.ModelInfo, error) {
+	created := time.Now().Unix()
+	seen := make(map[string]struct{}, len(items))
+	result := make([]pluginapi.ModelInfo, 0, len(items))
+
+	for _, item := range items {
+		slug := strings.TrimSpace(item.Slug)
+		if slug == "" {
+			slug = strings.TrimSpace(item.ID)
+		}
+		if slug == "" {
+			continue
+		}
+
+		cleanSlug := strings.TrimPrefix(slug, "mirasim/")
+		if _, exists := seen[cleanSlug]; exists {
+			continue
+		}
+		seen[cleanSlug] = struct{}{}
+
+		displayName := strings.TrimSpace(item.DisplayName)
+		if displayName == "" {
+			displayName = strings.TrimSpace(item.Label)
+		}
+		if displayName == "" {
+			displayName = cleanSlug
+		}
+
+		ownedBy := strings.TrimSpace(item.OwnedBy)
+		if ownedBy == "" {
+			ownedBy = detectOwner(cleanSlug)
+		}
+
+		modelType := strings.TrimSpace(item.Type)
+		if modelType == "" {
+			modelType = "chat"
+		}
+
+		info := pluginapi.ModelInfo{
+			ID:          "mirasim/" + cleanSlug,
+			Object:      "model",
+			Created:     created,
+			OwnedBy:     ownedBy,
+			Type:        modelType,
+			DisplayName: displayName,
+		}
+		result = append(result, info)
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no valid models found in catalog")
+	}
+	return result, nil
+}
+
+func loadCatalogFromBytes(data []byte, source string) error {
+	models, err := ValidateCatalogJSON(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+
+	catalogStore.mu.Lock()
+	defer catalogStore.mu.Unlock()
+
+	catalogStore.models = models
+	catalogStore.bySlug = make(map[string]pluginapi.ModelInfo, len(models))
+	for _, m := range models {
+		clean := strings.TrimPrefix(m.ID, "mirasim/")
+		catalogStore.bySlug[clean] = m
+	}
+	catalogStore.revision++
+	catalogStore.lastUpdated = time.Now()
+	return nil
+}
+
+// RefreshModelsFromUpstream dynamically queries upstream relay (/v1/models) and updates the in-memory catalog.
+func RefreshModelsFromUpstream(ctx context.Context, token, relayURL string) (bool, error) {
 	if relayURL == "" {
 		relayURL = "https://relay.mirasim.ai"
 	}
 	url := strings.TrimRight(relayURL, "/") + "/v1/models"
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return staticModels()
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("x-api-key", token)
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return staticModels()
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Errorf("create models request: %w", err)
+	}
+
+	httpReq.Header.Set("Accept", "application/json")
+	if token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+		httpReq.Header.Set("x-api-key", token)
+	}
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return false, fmt.Errorf("upstream models fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var payload struct {
-		Data []struct {
-			ID      string `json:"id"`
-			Object  string `json:"object"`
-			OwnedBy string `json:"owned_by"`
-		} `json:"data"`
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("upstream models returned status %d", resp.StatusCode)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil || len(payload.Data) == 0 {
-		return staticModels()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return false, fmt.Errorf("read upstream models: %w", err)
 	}
 
-	created := time.Now().Unix()
-	var dynamic []pluginapi.ModelInfo
-	for _, m := range payload.Data {
-		cleanID := strings.TrimPrefix(m.ID, "mirasim/")
-		dynamic = append(dynamic, pluginapi.ModelInfo{
-			ID:          "mirasim/" + cleanID,
-			Object:      "model",
-			Created:     created,
-			OwnedBy:     m.OwnedBy,
-			Type:        "chat",
-			DisplayName: cleanID + " (via Mirasim)",
-		})
+	if err := loadCatalogFromBytes(body, "upstream-relay"); err != nil {
+		return false, err
 	}
 
-	return dynamic
+	return true, nil
+}
+
+func detectOwner(slug string) string {
+	lower := strings.ToLower(slug)
+	switch {
+	case strings.HasPrefix(lower, "claude-"):
+		return "anthropic"
+	case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "o1"), strings.HasPrefix(lower, "o3"):
+		return "openai"
+	case strings.HasPrefix(lower, "gemini-"):
+		return "google"
+	case strings.HasPrefix(lower, "deepseek-"):
+		return "deepseek"
+	case strings.HasPrefix(lower, "kimi-"):
+		return "moonshot"
+	case strings.HasPrefix(lower, "qwen-"):
+		return "alibaba"
+	case strings.HasPrefix(lower, "grok-"):
+		return "xai"
+	case strings.HasPrefix(lower, "glm-"):
+		return "zhipu"
+	default:
+		return "mirasim"
+	}
 }
