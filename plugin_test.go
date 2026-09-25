@@ -45,7 +45,7 @@ func TestPluginRegister(t *testing.T) {
 	}
 }
 
-func TestModelStaticPrefix(t *testing.T) {
+func TestModelStaticNoHarnessExposed(t *testing.T) {
 	raw, err := handlePluginMethod(pluginabi.MethodModelStatic, nil)
 	if err != nil {
 		t.Fatalf("handlePluginMethod(model.static) error: %v", err)
@@ -68,9 +68,29 @@ func TestModelStaticPrefix(t *testing.T) {
 		t.Fatalf("expected at least 1 static model, got 0")
 	}
 
+	// Harness names that must NOT be exposed as model IDs
+	harnessNames := []string{
+		"mirasim/pi",
+		"mirasim/claude",
+		"mirasim/codex",
+		"mirasim/dsh",
+		"mirasim/antigravity",
+		"mirasim/qwen",
+		"mirasim/zcode",
+		"mirasim/grok",
+		"mirasim/echo",
+		"mirasim/default",
+	}
+
 	for _, m := range models {
 		if !strings.HasPrefix(m.ID, "mirasim/") {
 			t.Errorf("model %q does not have 'mirasim/' prefix", m.ID)
+		}
+
+		for _, hn := range harnessNames {
+			if m.ID == hn {
+				t.Errorf("harness runner %q is incorrectly exposed as a model ID", m.ID)
+			}
 		}
 	}
 }
@@ -79,24 +99,24 @@ func TestMapModelToAgent(t *testing.T) {
 	cases := []struct {
 		input       string
 		wantAgent   string
-		wantSub     string
+		wantModel   string
 	}{
-		{"mirasim/pi", "pi", ""},
-		{"mirasim/claude", "claude", ""},
 		{"mirasim/claude-3-7-sonnet", "claude", "claude-3-7-sonnet"},
-		{"mirasim/codex", "codex", ""},
+		{"mirasim/claude-3-5-sonnet", "claude", "claude-3-5-sonnet"},
 		{"mirasim/gpt-4o", "codex", "gpt-4o"},
-		{"mirasim/kimi", "kimi", "kimi"},
-		{"mirasim/qwen", "qwen", "qwen"},
-		{"mirasim/grok", "grok", "grok"},
-		{"mirasim/zcode", "zcode", "zcode"},
-		{"mirasim/custom-agent:submodel", "custom-agent", "submodel"},
+		{"mirasim/o1", "codex", "o1"},
+		{"mirasim/gemini-2.5-pro", "antigravity", "gemini-2.5-pro"},
+		{"mirasim/kimi-k1.5", "kimi", "kimi-k1.5"},
+		{"mirasim/qwen-2.5-coder-32b", "qwen", "qwen-2.5-coder-32b"},
+		{"mirasim/grok-2", "grok", "grok-2"},
+		{"mirasim/glm-4", "zcode", "glm-4"},
+		{"mirasim/deepseek-r1", "", "deepseek-r1"},
 	}
 
 	for _, tc := range cases {
-		agent, sub := MapModelToAgent(tc.input)
-		if agent != tc.wantAgent || sub != tc.wantSub {
-			t.Errorf("MapModelToAgent(%q) = (%q, %q), want (%q, %q)", tc.input, agent, sub, tc.wantAgent, tc.wantSub)
+		agent, model := MapModelToAgent(tc.input)
+		if agent != tc.wantAgent || model != tc.wantModel {
+			t.Errorf("MapModelToAgent(%q) = (%q, %q), want (%q, %q)", tc.input, agent, model, tc.wantAgent, tc.wantModel)
 		}
 	}
 }
@@ -137,10 +157,10 @@ func TestAuthLifecycle(t *testing.T) {
 		t.Fatalf("expected non-empty state from startLogin")
 	}
 
-	// 3. Simulate CLIProxyAPI panel writing callback file .oauth-mirasim-<state>.oauth
+	// 3. Simulate CLIProxyAPI panel receiving pasted redirect URL and writing .oauth-mirasim-<state>.oauth
 	tmpDir := t.TempDir()
 	cbPayload := oauthCallbackFilePayload{
-		Code:  "http://localhost:8080/v0/management/oauth-callback?token=my-secret-token&state=" + startResp.State,
+		Code:  "http://localhost:8080/v0/management/oauth-callback?code=my-secret-token&state=" + startResp.State,
 		State: startResp.State,
 	}
 	cbBytes, _ := json.Marshal(cbPayload)
@@ -212,9 +232,10 @@ func TestExtractTokenFromCode(t *testing.T) {
 		want  string
 	}{
 		{"my-token", "my-token"},
-		{"http://localhost:8080/callback?token=tok-123&state=s", "tok-123"},
-		{"http://localhost:8080/callback?code=code-456&state=s", "code-456"},
-		{"token=tok-789&state=s", "tok-789"},
+		{"http://localhost:8080/callback?code=code-123&state=s", "code-123"},
+		{"http://localhost:8080/callback?token=tok-456&state=s", "tok-456"},
+		{"http://localhost:4939/#token=hash-tok-789&state=s", "hash-tok-789"},
+		{"code=code-999&state=s", "code-999"},
 	}
 
 	for _, tc := range cases {

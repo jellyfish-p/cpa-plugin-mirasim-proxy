@@ -55,18 +55,32 @@ func extractTokenFromCode(raw string) string {
 		return ""
 	}
 
-	// If it's a URL or contains query string
+	// 1. If it's a URL with hash fragments (e.g. #token=... or #access_token=...)
+	if strings.Contains(raw, "#") {
+		parts := strings.SplitN(raw, "#", 2)
+		if len(parts) == 2 {
+			if q, err := url.ParseQuery(parts[1]); err == nil {
+				for _, k := range []string{"token", "code", "access_token", "key", "auth"} {
+					if v := q.Get(k); v != "" {
+						return strings.TrimSpace(v)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. If it's a URL or contains query parameters
 	if strings.Contains(raw, "?") || strings.Contains(raw, "&") || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
 		if u, err := url.Parse(raw); err == nil {
 			q := u.Query()
-			for _, k := range []string{"token", "code", "access_token", "key", "auth"} {
+			for _, k := range []string{"code", "token", "access_token", "key", "auth"} {
 				if v := q.Get(k); v != "" {
 					return strings.TrimSpace(v)
 				}
 			}
 		}
 		if q, err := url.ParseQuery(raw); err == nil {
-			for _, k := range []string{"token", "code", "access_token", "key", "auth"} {
+			for _, k := range []string{"code", "token", "access_token", "key", "auth"} {
 				if v := q.Get(k); v != "" {
 					return strings.TrimSpace(v)
 				}
@@ -74,6 +88,7 @@ func extractTokenFromCode(raw string) string {
 		}
 	}
 
+	// 3. Raw token string
 	return raw
 }
 

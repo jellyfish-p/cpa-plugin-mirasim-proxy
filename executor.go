@@ -222,8 +222,9 @@ func ConvertMessagesToPrompt(messages []ChatMessage) string {
 	return sb.String()
 }
 
-// MapModelToAgent resolves the Mirasim agent & sub-model from the requested model name.
-// Supports mirasim/{model} format (e.g. mirasim/pi, mirasim/claude-3-7-sonnet, mirasim/codex).
+// MapModelToAgent resolves the internal Mirasim harness & model from a pure model ID.
+// Model name format is strictly mirasim/{model_id} (e.g. mirasim/claude-3-7-sonnet, mirasim/gpt-4o).
+// Callers do not specify harness names; routing is completely transparent.
 func MapModelToAgent(modelName string) (agent string, actualModel string) {
 	m := strings.TrimSpace(modelName)
 	// Strip "mirasim/" prefix if present
@@ -233,36 +234,24 @@ func MapModelToAgent(modelName string) (agent string, actualModel string) {
 
 	mLower := strings.ToLower(m)
 
-	if parts := strings.SplitN(m, ":", 2); len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	if parts := strings.SplitN(m, "/", 2); len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-
 	switch {
-	case mLower == "" || mLower == "default":
-		return "", ""
-	case mLower == "pi":
-		return "pi", ""
-	case mLower == "claude":
-		return "claude", ""
 	case strings.HasPrefix(mLower, "claude-"):
 		return "claude", m
-	case mLower == "codex":
-		return "codex", ""
-	case strings.HasPrefix(mLower, "gpt-") || strings.HasPrefix(mLower, "o1") || strings.HasPrefix(mLower, "o3"):
+	case strings.HasPrefix(mLower, "gpt-") || strings.HasPrefix(mLower, "o1") || strings.HasPrefix(mLower, "o3") || strings.HasPrefix(mLower, "chatgpt"):
 		return "codex", m
-	case strings.HasPrefix(mLower, "kimi"):
+	case strings.HasPrefix(mLower, "gemini-"):
+		return "antigravity", m
+	case strings.HasPrefix(mLower, "kimi") || strings.HasPrefix(mLower, "moonshot"):
 		return "kimi", m
 	case strings.HasPrefix(mLower, "qwen"):
 		return "qwen", m
 	case strings.HasPrefix(mLower, "grok"):
 		return "grok", m
-	case strings.HasPrefix(mLower, "zcode") || strings.HasPrefix(mLower, "glm"):
+	case strings.HasPrefix(mLower, "glm") || strings.HasPrefix(mLower, "zcode") || strings.HasPrefix(mLower, "chatglm"):
 		return "zcode", m
 	default:
-		return m, ""
+		// Forward any custom or new model ID directly to Mirasim
+		return "", m
 	}
 }
 
