@@ -154,6 +154,17 @@ func handlePluginMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodModelStatic:
 		return okEnvelope(staticModels())
 
+	case pluginabi.MethodModelForAuth:
+		token, relayURL := GetActiveAuth()
+		if token == "" {
+			token = resolveActiveToken(loadedConfig())
+		}
+		models := fetchUpstreamModels(token, relayURL)
+		return okEnvelope(pluginapi.ModelResponse{
+			Provider: pluginIdentifier,
+			Models:   models,
+		})
+
 	case pluginabi.MethodExecutorIdentifier:
 		return okEnvelope(map[string]string{"identifier": pluginIdentifier})
 

@@ -93,6 +93,22 @@ func TestModelStaticNoHarnessExposed(t *testing.T) {
 			}
 		}
 	}
+
+	// Test model.for_auth as well
+	rawAuth, err := handlePluginMethod(pluginabi.MethodModelForAuth, nil)
+	if err != nil {
+		t.Fatalf("handlePluginMethod(model.for_auth) error: %v", err)
+	}
+	var envAuth envelope
+	_ = json.Unmarshal(rawAuth, &envAuth)
+	if !envAuth.OK {
+		t.Fatalf("model.for_auth failed: %+v", envAuth.Error)
+	}
+	var respAuth pluginapi.ModelResponse
+	_ = json.Unmarshal(envAuth.Result, &respAuth)
+	if len(respAuth.Models) == 0 {
+		t.Fatalf("expected non-empty models from model.for_auth")
+	}
 }
 
 func TestTranslateOpenAIToClaude(t *testing.T) {
