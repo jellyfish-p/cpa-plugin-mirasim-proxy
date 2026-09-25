@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	pluginName       = "mirasim"
-	pluginIdentifier = "mirasim"
+	pluginName       = "mirasim-proxy"
+	pluginIdentifier = "mirasim-proxy"
 	pluginVersion    = "1.0.0"
 )
 
@@ -97,8 +97,8 @@ func pluginRegistration() registration {
 		Metadata: pluginapi.Metadata{
 			Name:             pluginName,
 			Version:          pluginVersion,
-			Author:           "cpa-mirasim",
-			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
+			Author:           "jellyfish-p",
+			GitHubRepository: "https://github.com/jellyfish-p/cpa-plugin-mirasim-proxy",
 			ConfigFields: []pluginapi.ConfigField{
 				{
 					Name:        "enabled",

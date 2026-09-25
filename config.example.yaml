@@ -1,11 +1,11 @@
-# CLIProxyAPI Plugin Configuration for Mirasim
+# CLIProxyAPI Plugin Configuration for Mirasim Proxy
 # Place this under your CLIProxyAPI config.yaml
 
 plugins:
   enabled: true
-  dir: "plugins" # Directory containing mirasim.dll or mirasim.so
+  dir: "plugins" # Directory containing mirasim-proxy.dll or mirasim-proxy.so
   configs:
-    mirasim:
+    mirasim-proxy:
       enabled: true
       priority: 1
       # Mirasim Relay / API Gateway URL (default: https://relay.mirasim.ai)

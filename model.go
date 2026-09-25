@@ -129,7 +129,8 @@ func parseCatalogItems(items []catalogModelItem) ([]pluginapi.ModelInfo, error) 
 			continue
 		}
 
-		cleanSlug := strings.TrimPrefix(slug, "mirasim/")
+		cleanSlug := strings.TrimPrefix(slug, "mirasim-proxy/")
+		cleanSlug = strings.TrimPrefix(cleanSlug, "mirasim/")
 		if _, exists := seen[cleanSlug]; exists {
 			continue
 		}
@@ -154,7 +155,7 @@ func parseCatalogItems(items []catalogModelItem) ([]pluginapi.ModelInfo, error) 
 		}
 
 		info := pluginapi.ModelInfo{
-			ID:          "mirasim/" + cleanSlug,
+			ID:          "mirasim-proxy/" + cleanSlug,
 			Object:      "model",
 			Created:     created,
 			OwnedBy:     ownedBy,
@@ -182,7 +183,8 @@ func loadCatalogFromBytes(data []byte, source string) error {
 	catalogStore.models = models
 	catalogStore.bySlug = make(map[string]pluginapi.ModelInfo, len(models))
 	for _, m := range models {
-		clean := strings.TrimPrefix(m.ID, "mirasim/")
+		clean := strings.TrimPrefix(m.ID, "mirasim-proxy/")
+		clean = strings.TrimPrefix(clean, "mirasim/")
 		catalogStore.bySlug[clean] = m
 	}
 	catalogStore.revision++

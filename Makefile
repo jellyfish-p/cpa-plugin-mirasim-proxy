@@ -1,25 +1,12 @@
-UNAME_S := $(shell uname -s)
-
-ifeq ($(OS),Windows_NT)
-PLUGIN_EXT := dll
-else ifeq ($(UNAME_S),Darwin)
-PLUGIN_EXT := dylib
-else
-PLUGIN_EXT := so
-endif
-
-OUTPUT := mirasim.$(PLUGIN_EXT)
-
-.PHONY: all build test clean
-
-all: build
+.PHONY: build test clean
 
 build:
-	CGO_ENABLED=1 go build -buildmode=c-shared -o $(OUTPUT) .
-	@rm -f mirasim.h
+	CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o mirasim-proxy.so .
+	rm -f mirasim-proxy.h
 
 test:
 	go test -v ./...
+	go test -v ./.github/scripts
 
 clean:
-	rm -f *.dll *.so *.dylib *.h
+	rm -f mirasim-proxy.so mirasim-proxy.dll mirasim-proxy.dylib mirasim-proxy.h

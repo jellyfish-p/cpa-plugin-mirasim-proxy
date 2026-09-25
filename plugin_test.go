@@ -31,8 +31,8 @@ func TestPluginRegister(t *testing.T) {
 		t.Fatalf("unmarshal registration: %v", err)
 	}
 
-	if reg.Metadata.Name != "mirasim" {
-		t.Errorf("expected metadata.Name = mirasim, got %s", reg.Metadata.Name)
+	if reg.Metadata.Name != "mirasim-proxy" {
+		t.Errorf("expected metadata.Name = mirasim-proxy, got %s", reg.Metadata.Name)
 	}
 	if !reg.Capabilities.Executor {
 		t.Errorf("expected Capabilities.Executor = true")
@@ -70,21 +70,21 @@ func TestModelStaticNoHarnessExposed(t *testing.T) {
 
 	// Harness execution runners that must NEVER be exposed as model IDs
 	harnessNames := []string{
-		"mirasim/pi",
-		"mirasim/claude",
-		"mirasim/codex",
-		"mirasim/dsh",
-		"mirasim/antigravity",
-		"mirasim/qwen",
-		"mirasim/zcode",
-		"mirasim/grok",
-		"mirasim/echo",
-		"mirasim/default",
+		"mirasim-proxy/pi",
+		"mirasim-proxy/claude",
+		"mirasim-proxy/codex",
+		"mirasim-proxy/dsh",
+		"mirasim-proxy/antigravity",
+		"mirasim-proxy/qwen",
+		"mirasim-proxy/zcode",
+		"mirasim-proxy/grok",
+		"mirasim-proxy/echo",
+		"mirasim-proxy/default",
 	}
 
 	for _, m := range models {
-		if !strings.HasPrefix(m.ID, "mirasim/") {
-			t.Errorf("model %q does not have 'mirasim/' prefix", m.ID)
+		if !strings.HasPrefix(m.ID, "mirasim-proxy/") {
+			t.Errorf("model %q does not have 'mirasim-proxy/' prefix", m.ID)
 		}
 
 		for _, hn := range harnessNames {
@@ -155,7 +155,7 @@ func TestCatalogValidationAndDynamicUpdate(t *testing.T) {
 	current := GetModelsCatalog()
 	foundCustom := false
 	for _, m := range current {
-		if m.ID == "mirasim/custom-experimental-model" {
+		if m.ID == "mirasim-proxy/custom-experimental-model" {
 			foundCustom = true
 			if m.DisplayName != "Custom Experimental Model" {
 				t.Errorf("expected display name 'Custom Experimental Model', got %s", m.DisplayName)

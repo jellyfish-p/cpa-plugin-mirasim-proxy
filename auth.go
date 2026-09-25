@@ -126,7 +126,7 @@ func handleAuthIdentifier() any {
 
 func handleAuthParse(req pluginapi.AuthParseRequest) (pluginapi.AuthParseResponse, error) {
 	prov := strings.ToLower(strings.TrimSpace(req.Provider))
-	if prov != "" && prov != pluginIdentifier {
+	if prov != "" && prov != pluginIdentifier && prov != "mirasim" {
 		return pluginapi.AuthParseResponse{Handled: false}, nil
 	}
 
@@ -144,7 +144,7 @@ func handleAuthParse(req pluginapi.AuthParseRequest) (pluginapi.AuthParseRespons
 	}
 
 	// Verify if this auth file belongs to Mirasim
-	if prov != pluginIdentifier && data.Type != pluginIdentifier && !strings.Contains(strings.ToLower(req.FileName), "mirasim") {
+	if prov != pluginIdentifier && prov != "mirasim" && data.Type != pluginIdentifier && data.Type != "mirasim" && !strings.Contains(strings.ToLower(req.FileName), "mirasim") {
 		return pluginapi.AuthParseResponse{Handled: false}, nil
 	}
 
@@ -221,43 +221,48 @@ func handleAuthLoginPoll(ctx context.Context, req pluginapi.AuthLoginPollRequest
 	// 1. Check for callback file written by CLIProxyAPI when user pastes callback URL in WebUI panel
 	authDir := req.Host.AuthDir
 	if authDir != "" && req.State != "" {
-		waitFile := filepath.Join(authDir, fmt.Sprintf(".oauth-%s-%s.oauth", pluginIdentifier, req.State))
-		if data, err := os.ReadFile(waitFile); err == nil {
-			_ = os.Remove(waitFile)
+		waitFiles := []string{
+			filepath.Join(authDir, fmt.Sprintf(".oauth-%s-%s.oauth", pluginIdentifier, req.State)),
+			filepath.Join(authDir, fmt.Sprintf(".oauth-mirasim-%s.oauth", req.State)),
+		}
+		for _, waitFile := range waitFiles {
+			if data, err := os.ReadFile(waitFile); err == nil {
+				_ = os.Remove(waitFile)
 
-			var cb oauthCallbackFilePayload
-			if errDecode := json.Unmarshal(data, &cb); errDecode == nil {
-				if cb.Error != "" {
-					return pluginapi.AuthLoginPollResponse{
-						Status:  pluginapi.AuthLoginStatusError,
-						Message: fmt.Sprintf("authorization failed: %s", cb.Error),
-					}, nil
-				}
+				var cb oauthCallbackFilePayload
+				if errDecode := json.Unmarshal(data, &cb); errDecode == nil {
+					if cb.Error != "" {
+						return pluginapi.AuthLoginPollResponse{
+							Status:  pluginapi.AuthLoginStatusError,
+							Message: fmt.Sprintf("authorization failed: %s", cb.Error),
+						}, nil
+					}
 
-				token := extractTokenFromCode(cb.Code)
-				if token != "" {
-					SetActiveAuth(token, relayURL)
+					token := extractTokenFromCode(cb.Code)
+					if token != "" {
+						SetActiveAuth(token, relayURL)
 
-					storageData, _ := json.Marshal(map[string]any{
-						"type":      pluginIdentifier,
-						"token":     token,
-						"relay_url": relayURL,
-					})
+						storageData, _ := json.Marshal(map[string]any{
+							"type":      pluginIdentifier,
+							"token":     token,
+							"relay_url": relayURL,
+						})
 
-					return pluginapi.AuthLoginPollResponse{
-						Status: pluginapi.AuthLoginStatusSuccess,
-						Auth: pluginapi.AuthData{
-							Provider:    pluginIdentifier,
-							ID:          "mirasim.json",
-							FileName:    "mirasim.json",
-							StorageJSON: storageData,
-							Metadata: map[string]any{
-								"type":      pluginIdentifier,
-								"token":     token,
-								"relay_url": relayURL,
+						return pluginapi.AuthLoginPollResponse{
+							Status: pluginapi.AuthLoginStatusSuccess,
+							Auth: pluginapi.AuthData{
+								Provider:    pluginIdentifier,
+								ID:          "mirasim-proxy.json",
+								FileName:    "mirasim-proxy.json",
+								StorageJSON: storageData,
+								Metadata: map[string]any{
+									"type":      pluginIdentifier,
+									"token":     token,
+									"relay_url": relayURL,
+								},
 							},
-						},
-					}, nil
+						}, nil
+					}
 				}
 			}
 		}

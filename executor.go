@@ -143,7 +143,8 @@ func executeNonStream(ctx context.Context, cfg pluginConfig, req pluginapi.Execu
 		modelName = chatReq.Model
 	}
 
-	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim/")
+	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim-proxy/")
+	modelID = strings.TrimPrefix(modelID, "mirasim/")
 	token := resolveActiveToken(cfg)
 	if token == "" {
 		return pluginapi.ExecutorResponse{}, fmt.Errorf("no Mirasim authentication token found; please log in via OAuth panel or set token in config")
@@ -234,7 +235,8 @@ func executeStreamRequest(cfg pluginConfig, req rpcExecutorRequest) (streamRespo
 		modelName = chatReq.Model
 	}
 
-	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim/")
+	modelID := strings.TrimPrefix(strings.TrimSpace(modelName), "mirasim-proxy/")
+	modelID = strings.TrimPrefix(modelID, "mirasim/")
 	token := resolveActiveToken(cfg)
 	if token == "" {
 		return streamResponse{}, fmt.Errorf("no Mirasim authentication token found; please log in via OAuth panel or set token in config")
