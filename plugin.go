@@ -14,7 +14,7 @@ import (
 const (
 	pluginName       = "mirasim-proxy"
 	pluginIdentifier = "mirasim-proxy"
-	pluginVersion    = "1.0.0"
+	pluginVersion    = "1.0.1"
 )
 
 var (
