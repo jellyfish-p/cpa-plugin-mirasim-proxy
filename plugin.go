@@ -73,6 +73,7 @@ type registrationCapability struct {
 	ModelProvider         bool                         `json:"model_provider"`
 	Executor              bool                         `json:"executor"`
 	AuthProvider          bool                         `json:"auth_provider"`
+	ManagementAPI         bool                         `json:"management_api,omitempty"`
 	ExecutorModelScope    pluginapi.ExecutorModelScope `json:"executor_model_scope"`
 	ExecutorInputFormats  []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats []string                     `json:"executor_output_formats,omitempty"`
@@ -115,12 +116,18 @@ func pluginRegistration() registration {
 					Type:        pluginapi.ConfigFieldTypeString,
 					Description: "Manual authentication token (or configure via OAuth)",
 				},
+				{
+					Name:        "oauth_provider",
+					Type:        pluginapi.ConfigFieldTypeString,
+					Description: "OAuth provider option: 'all' (default web selection page with GitHub/Google/Session), 'github', or 'google'",
+				},
 			},
 		},
 		Capabilities: registrationCapability{
 			ModelProvider:         true,
 			Executor:              true,
 			AuthProvider:          true,
+			ManagementAPI:         true,
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeBoth,
 			ExecutorInputFormats:  []string{"chat-completions", "openai.chat"},
 			ExecutorOutputFormats: []string{"chat-completions", "openai.chat"},
@@ -244,6 +251,22 @@ func handlePluginMethod(method string, request []byte) ([]byte, error) {
 			return errorEnvelope("auth_refresh_error", err.Error()), nil
 		}
 		return okEnvelope(resp)
+
+	case pluginabi.MethodManagementRegister:
+		return okEnvelope(pluginapi.ManagementRegistrationResponse{
+			Resources: []pluginapi.ResourceRoute{{
+				Path:        "/auth",
+				Menu:        "Mirasim Auth",
+				Description: "Mirasim OAuth and Session login selection page",
+			}},
+		})
+
+	case pluginabi.MethodManagementHandle:
+		var req pluginapi.ManagementRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return errorEnvelope("invalid_request", err.Error()), nil
+		}
+		return okEnvelope(handleManagementRequest(req))
 
 	default:
 		return errorEnvelope("unknown_method", fmt.Sprintf("method not handled: %s", method)), nil

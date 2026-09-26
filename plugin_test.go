@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -399,8 +400,13 @@ func TestExtractTokenFromCode(t *testing.T) {
 		{"my-token", "my-token"},
 		{"http://localhost:8080/callback?code=code-123&state=s", "code-123"},
 		{"http://localhost:8080/callback?token=tok-456&state=s", "tok-456"},
+		{"http://localhost:8080/callback?session=sess-789&state=s", "sess-789"},
+		{"http://localhost:8080/callback?session_token=tok-abc&state=s", "tok-abc"},
+		{"http://localhost:8080/callback?mirachannelToken=mira-xyz&state=s", "mira-xyz"},
 		{"http://localhost:4939/#token=hash-tok-789&state=s", "hash-tok-789"},
+		{"http://localhost:4939/#session=hash-sess-101&state=s", "hash-sess-101"},
 		{"code=code-999&state=s", "code-999"},
+		{"session=session-999&state=s", "session-999"},
 	}
 
 	for _, tc := range cases {
@@ -408,5 +414,171 @@ func TestExtractTokenFromCode(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("extractTokenFromCode(%q) = %q, want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestOAuthProviderOptions(t *testing.T) {
+	// 1. GitHub provider direct URL
+	startReqGH := rpcAuthLoginStartRequest{
+		AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{
+			Provider: "mirasim",
+			BaseURL:  "http://127.0.0.1:8080/v0/management/oauth-callback",
+			Metadata: map[string]any{"oauth_provider": "github"},
+		},
+	}
+	startBytesGH, _ := json.Marshal(startReqGH)
+	rawStartGH, err := handlePluginMethod(pluginabi.MethodAuthLoginStart, startBytesGH)
+	if err != nil {
+		t.Fatalf("auth.login.start (github) error: %v", err)
+	}
+	var envStartGH envelope
+	_ = json.Unmarshal(rawStartGH, &envStartGH)
+	var respGH pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStartGH.Result, &respGH)
+	if !strings.HasPrefix(respGH.URL, "https://auth.mirasim.ai/auth/oauth/github/login?") {
+		t.Fatalf("expected github login URL, got: %s", respGH.URL)
+	}
+	if !strings.Contains(respGH.URL, "redirect_uri=") || !strings.Contains(respGH.URL, "state=") {
+		t.Fatalf("missing redirect_uri or state in URL: %s", respGH.URL)
+	}
+
+	// 2. Google provider direct URL
+	startReqGoogle := rpcAuthLoginStartRequest{
+		AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{
+			Provider: "mirasim",
+			BaseURL:  "http://127.0.0.1:8080/v0/management/oauth-callback",
+			Metadata: map[string]any{"oauth_provider": "google"},
+		},
+	}
+	startBytesGoogle, _ := json.Marshal(startReqGoogle)
+	rawStartGoogle, err := handlePluginMethod(pluginabi.MethodAuthLoginStart, startBytesGoogle)
+	if err != nil {
+		t.Fatalf("auth.login.start (google) error: %v", err)
+	}
+	var envStartGoogle envelope
+	_ = json.Unmarshal(rawStartGoogle, &envStartGoogle)
+	var respGoogle pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStartGoogle.Result, &respGoogle)
+	if !strings.HasPrefix(respGoogle.URL, "https://auth.mirasim.ai/auth/oauth/google/login?") {
+		t.Fatalf("expected google login URL, got: %s", respGoogle.URL)
+	}
+
+	// 3. Default "all" provider returns web selection page
+	startReqAll := rpcAuthLoginStartRequest{
+		AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{
+			Provider: "mirasim",
+			BaseURL:  "http://127.0.0.1:8080/v0/management/oauth-callback",
+		},
+	}
+	startBytesAll, _ := json.Marshal(startReqAll)
+	rawStartAll, err := handlePluginMethod(pluginabi.MethodAuthLoginStart, startBytesAll)
+	if err != nil {
+		t.Fatalf("auth.login.start (all) error: %v", err)
+	}
+	var envStartAll envelope
+	_ = json.Unmarshal(rawStartAll, &envStartAll)
+	var respAll pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStartAll.Result, &respAll)
+	if !strings.Contains(respAll.URL, "/auth?") {
+		t.Fatalf("expected web selection page URL containing /auth?, got: %s", respAll.URL)
+	}
+}
+
+func TestDirectSessionSubmissionAndWebCompatibility(t *testing.T) {
+	// 1. Start login flow
+	startReq := rpcAuthLoginStartRequest{
+		AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{
+			Provider: "mirasim",
+			BaseURL:  "http://127.0.0.1:8080/v0/management/oauth-callback",
+		},
+	}
+	startBytes, _ := json.Marshal(startReq)
+	rawStart, err := handlePluginMethod(pluginabi.MethodAuthLoginStart, startBytes)
+	if err != nil {
+		t.Fatalf("start error: %v", err)
+	}
+	var envStart envelope
+	_ = json.Unmarshal(rawStart, &envStart)
+	var startResp pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStart.Result, &startResp)
+	state := startResp.State
+
+	// 2. Test Management API /auth resource route delivers HTML with GitHub, Google, and Session options
+	rawMgmtReg, err := handlePluginMethod(pluginabi.MethodManagementRegister, nil)
+	if err != nil {
+		t.Fatalf("management.register error: %v", err)
+	}
+	var envMgmtReg envelope
+	_ = json.Unmarshal(rawMgmtReg, &envMgmtReg)
+	if !envMgmtReg.OK {
+		t.Fatalf("management.register not ok")
+	}
+
+	mgmtReqGet := pluginapi.ManagementRequest{
+		Method: "GET",
+		Path:   "/auth",
+		Query:  url.Values{"state": []string{state}, "redirect_uri": []string{"http://127.0.0.1:8080/v0/management/oauth-callback"}},
+	}
+	mgmtGetJson, _ := json.Marshal(mgmtReqGet)
+	rawMgmtGet, err := handlePluginMethod(pluginabi.MethodManagementHandle, mgmtGetJson)
+	if err != nil {
+		t.Fatalf("management.handle GET error: %v", err)
+	}
+	var envMgmtGet envelope
+	_ = json.Unmarshal(rawMgmtGet, &envMgmtGet)
+	var mgmtRespGet pluginapi.ManagementResponse
+	_ = json.Unmarshal(envMgmtGet.Result, &mgmtRespGet)
+	htmlBody := string(mgmtRespGet.Body)
+	if !strings.Contains(htmlBody, "使用 GitHub 账号登录") {
+		t.Fatalf("missing GitHub button in HTML: %s", htmlBody)
+	}
+	if !strings.Contains(htmlBody, "使用 Google 账号登录") {
+		t.Fatalf("missing Google button in HTML: %s", htmlBody)
+	}
+	if !strings.Contains(htmlBody, "输入 Session Token / 访问令牌") {
+		t.Fatalf("missing direct session input section in HTML: %s", htmlBody)
+	}
+
+	// 3. Directly submit session token via management POST
+	submitPayload := []byte(fmt.Sprintf(`{"state":"%s","token":"my-direct-session-jwt-token"}`, state))
+	mgmtReqPost := pluginapi.ManagementRequest{
+		Method: "POST",
+		Path:   "/auth/submit",
+		Body:   submitPayload,
+	}
+	mgmtPostJson, _ := json.Marshal(mgmtReqPost)
+	rawMgmtPost, err := handlePluginMethod(pluginabi.MethodManagementHandle, mgmtPostJson)
+	if err != nil {
+		t.Fatalf("management.handle POST error: %v", err)
+	}
+	var envMgmtPost envelope
+	_ = json.Unmarshal(rawMgmtPost, &envMgmtPost)
+	var mgmtRespPost pluginapi.ManagementResponse
+	_ = json.Unmarshal(envMgmtPost.Result, &mgmtRespPost)
+	if mgmtRespPost.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", mgmtRespPost.StatusCode)
+	}
+
+	// 4. Poll should immediately succeed and return the directly entered session token
+	pollReq := rpcAuthLoginPollRequest{
+		AuthLoginPollRequest: pluginapi.AuthLoginPollRequest{
+			Provider: "mirasim",
+			State:    state,
+		},
+	}
+	pollBytes, _ := json.Marshal(pollReq)
+	rawPoll, err := handlePluginMethod(pluginabi.MethodAuthLoginPoll, pollBytes)
+	if err != nil {
+		t.Fatalf("poll error: %v", err)
+	}
+	var envPoll envelope
+	_ = json.Unmarshal(rawPoll, &envPoll)
+	var pollResp pluginapi.AuthLoginPollResponse
+	_ = json.Unmarshal(envPoll.Result, &pollResp)
+	if pollResp.Status != pluginapi.AuthLoginStatusSuccess {
+		t.Fatalf("expected poll status=success, got %s", pollResp.Status)
+	}
+	if tok := pollResp.Auth.Metadata["token"]; tok != "my-direct-session-jwt-token" {
+		t.Fatalf("expected token='my-direct-session-jwt-token', got %v", tok)
 	}
 }

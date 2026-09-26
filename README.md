@@ -54,16 +54,19 @@ Mirasim 在 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 平台�
 
 ---
 
-## 控制面板与 OAuth 回填操作流程
+## 控制面板与 OAuth / Session 登录操作流程
 
 1. **发起授权**：
    在 CLIProxyAPI 管理面板点击 **Mirasim Proxy 登录**（或请求 `GET /v0/management/mirasim-proxy-auth-url`），获取授权 URL。
-2. **浏览器授权**：
-   在本地浏览器中打开返回的授权地址。
+2. **多模式登录支持**：
+   在浏览器中打开授权链接，系统提供以下三种登录授权选项：
+   - 🐱 **GitHub 登录**：通过 GitHub OAuth 授权（跳转至官方登录页）。
+   - 🌐 **Google 登录**：通过 Google OAuth 授权（跳转至官方登录页）。
+   - 🔑 **直接输入 Session (网页兼容模式)**：适用于远程服务器、容器或受限网络环境。直接在网页中填入已有的 Mirasim 访问凭据（JWT Token 或 `mirachannelToken`），点击“提交并授权”即可自动完成绑定。
 3. **回填回调地址 (远程部署 / 容器场景)**：
-   浏览器跳转完成后，复制本地浏览器地址栏中的完整重定向 URL，粘贴至管理控制台的“回填回调地址”输入框并提交（前端调用 `POST /v0/management/oauth-callback`）。
+   若处于无头或远程环境，第三方 OAuth 授权跳转完成后（或直接在页面中输入 Session 生成回调地址后），复制完整重定向 URL，粘贴至管理控制台的“回填回调地址”输入框并提交（前端调用 `POST /v0/management/oauth-callback`）。
 4. **自动完成绑定**：
-   插件解析 URL 中的凭证信息并持久化写入 `mirasim-proxy.json`。后续外部客户端发送的请求将自动携带该 Token 鉴权。
+   插件解析凭据信息并持久化写入 `mirasim-proxy.json`。后续外部客户端发送的请求将自动携带该 Token 鉴权。
 
 ---
 
@@ -99,6 +102,8 @@ plugins:
       priority: 1
       # Mirasim 上游网关（默认: https://relay.mirasim.ai）
       relay_url: "https://relay.mirasim.ai"
+      # OAuth 登录选项 (默认: "all", 网页选择页提供 GitHub/Google/直接输入Session 三种方式; 可选 "github" 或 "google" 直跳)
+      oauth_provider: "all"
       # 可选：手动指定 Token（亦可通过面板 OAuth 完成配置）
       # token: "YOUR_MIRASIM_TOKEN"
 ```

@@ -10,5 +10,7 @@ plugins:
       priority: 1
       # Mirasim Relay / API Gateway URL (default: https://relay.mirasim.ai)
       relay_url: "https://relay.mirasim.ai"
+      # OAuth 登录选项 (默认: "all", 网页选择页提供 GitHub/Google/直接输入Session 三种方式; 可选 "github" 或 "google" 直跳)
+      oauth_provider: "all"
       # Optional: manual token override (can also be configured via OAuth in the WebUI panel)
       # token: "YOUR_MIRASIM_TOKEN"
